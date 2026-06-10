@@ -1,26 +1,30 @@
 # Ryder Cup Friends Edition
 
-## Deploy auf Vercel (3 Schritte)
+## Deploy auf Vercel
 
 ### 1. GitHub
-- Geh auf github.com → "New repository" → Name: `ryder-cup`
-- Alle Dateien in diesen Ordner hochladen (drag & drop funktioniert!)
+- Alle Dateien in dein `ryder-cup` GitHub Repo hochladen (drag & drop)
+- **WICHTIG:** Die firebase-adminsdk JSON Datei NICHT hochladen!
 
-### 2. Vercel
-- Geh auf vercel.com → "Add New Project"
-- GitHub-Repo `ryder-cup` auswählen
-- Einfach auf "Deploy" klicken – fertig!
+### 2. Umgebungsvariable in Vercel setzen
+Das ist der wichtigste Schritt für Push-Benachrichtigungen:
 
-### 3. Link teilen
-- Vercel gibt dir eine URL wie `ryder-cup-xyz.vercel.app`
-- Diese URL per WhatsApp an alle teilen
-- Alle öffnen die URL im iPhone Browser → fertig!
+1. Vercel Dashboard → dein Projekt → **Settings** → **Environment Variables**
+2. Name: `FIREBASE_SERVICE_ACCOUNT`
+3. Value: Den gesamten Inhalt der firebase-adminsdk JSON Datei einfügen
+4. **Save** klicken
+5. Projekt neu deployen: **Deployments** → **Redeploy**
 
-## Zugangscode
-`RYDER2024`
+### 3. Fertig!
+URL per WhatsApp teilen → alle öffnen im iPhone Safari →
+Teilen → Zum Homescreen → App öffnen → Benachrichtigungen erlauben
 
-## Funktionen
-- Echtzeit-Sync via Firebase (alle sehen sofort den aktuellen Stand)
-- 2 Spieltage: Riedhof + Bergkramerhof
-- 2x9 Loch Scramble Matchplay
-- Hochrechnung + Siegwahrscheinlichkeit
+## Zugangscodes
+| Code | Rolle |
+|------|-------|
+| RYDER-ADMIN | Admin |
+| RYDER2024 | Zuschauer |
+| MATCH1–MATCH8 | Spieler |
+
+## Push-Benachrichtigungen
+Nur als PWA (Homescreen installiert) auf iOS 16.4+
