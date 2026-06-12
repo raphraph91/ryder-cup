@@ -1167,29 +1167,138 @@ function Dashboard({config,role,onBack,theme,onThemeChange}){
   );
 }
 
+// ── Admin Main Menu ───────────────────────────────────────────────────────────
+function AdminMenu({config,onSelect,onBack,theme,onThemeChange,T}){
+  const [showSettings,setShowSettings]=useState(false);
+  const hasConfig=!!config;
+  const menuItems=[
+    {key:"players",icon:"👤",label:"Spielerverwaltung",desc:"Spieler erstellen & verwalten",available:true,color:T.blue},
+    {key:"planning",icon:"📋",label:"Turnierplanung",desc:"Matches & Spielerzuordnung",available:true,color:T.gold},
+    {key:"game",icon:"⛳",label:"Turnier Durchführung",desc:hasConfig?"Scores eintragen & live verfolgen":"Turnier muss zuerst geplant werden",available:hasConfig,color:T.muted},
+  ];
+  return(
+    <div style={{minHeight:"100vh",background:T.bg,color:T.cream,fontFamily:"'Georgia',serif"}}>
+      {showSettings&&<SettingsPanel T={T} currentTheme={theme} onThemeChange={onThemeChange} onClose={()=>setShowSettings(false)}/>}
+      <div style={{background:T.headerBg,borderBottom:`2px solid ${T.gold}`,padding:"14px 20px",textAlign:"center",position:"relative"}}>
+        <BackButton onConfirm={onBack} T={T}/>
+        <button style={{position:"absolute",right:"14px",top:"50%",transform:"translateY(-50%)",background:"transparent",border:"none",color:"rgba(255,255,255,0.6)",cursor:"pointer",padding:"4px"}} onClick={()=>setShowSettings(true)}>
+          <IconSettings size={20} color="rgba(255,255,255,0.6)"/>
+        </button>
+        <div style={{fontSize:"18px",fontWeight:"900",letterSpacing:"3px",color:T.gold,textTransform:"uppercase",fontFamily:"'Arial Black',sans-serif"}}>⛳ Ryder Cup</div>
+        <div style={{fontSize:"10px",color:"rgba(255,255,255,0.5)",letterSpacing:"2px",marginTop:"3px"}}>ADMIN BEREICH</div>
+      </div>
+      <div style={{padding:"20px",maxWidth:"480px",margin:"0 auto"}}>
+        <div style={{background:T.elevated,border:`1px solid ${T.gold}44`,borderRadius:"10px",padding:"12px 16px",marginBottom:"24px",display:"flex",alignItems:"center",gap:"10px"}}>
+          <span style={{fontSize:"20px"}}>👑</span>
+          <div><div style={{fontSize:"12px",fontWeight:"700",color:T.gold}}>Administrator</div><div style={{fontSize:"11px",color:T.muted}}>Vollzugriff auf alle Bereiche</div></div>
+          <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:"4px"}}>
+            <div style={{width:"6px",height:"6px",borderRadius:"50%",background:hasConfig?"#4CAF50":"#C9A84C"}}/>
+            <div style={{fontSize:"10px",color:T.faint}}>{hasConfig?"Aktiv":"Kein Turnier"}</div>
+          </div>
+        </div>
+
+        <div style={{display:"flex",flexDirection:"column",gap:"12px"}}>
+          {menuItems.map(item=>(
+            <button key={item.key}
+              onClick={()=>item.available&&onSelect(item.key)}
+              style={{width:"100%",background:T.cardBg,border:`2px solid ${item.available?item.color+"55":T.border}`,borderRadius:"14px",padding:"18px 20px",cursor:item.available?"pointer":"not-allowed",textAlign:"left",display:"flex",alignItems:"center",gap:"16px",opacity:item.available?1:0.5,transition:"all 0.15s"}}>
+              <div style={{width:"52px",height:"52px",borderRadius:"14px",background:item.color+"22",border:`1px solid ${item.color}44`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"24px",flexShrink:0}}>
+                {item.icon}
+              </div>
+              <div style={{flex:1}}>
+                <div style={{fontSize:"15px",fontWeight:"900",color:item.available?item.color:T.muted,fontFamily:"'Arial Black',sans-serif",letterSpacing:"0.5px"}}>{item.label}</div>
+                <div style={{fontSize:"11px",color:T.faint,marginTop:"3px"}}>{item.desc}</div>
+              </div>
+              <div style={{fontSize:"18px",color:item.available?item.color:T.border,opacity:0.6}}>›</div>
+            </button>
+          ))}
+        </div>
+
+        {hasConfig&&(
+          <div style={{marginTop:"20px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:"10px",padding:"12px 14px"}}>
+            <div style={{fontSize:"10px",color:T.gold,letterSpacing:"1px",marginBottom:"8px",textTransform:"uppercase"}}>Aktives Turnier</div>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:"12px"}}>
+              <span style={{color:T.blue}}>🔵 {config.t1Name}</span>
+              <span style={{color:T.muted}}>vs</span>
+              <span style={{color:T.red}}>🔴 {config.t2Name}</span>
+            </div>
+            <div style={{fontSize:"11px",color:T.faint,marginTop:"6px"}}>{config.days?.length||0} Spieltage · {config.days?.reduce((s,d)=>s+d.matches.length,0)||0} Matches gesamt</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Player Management (Placeholder) ──────────────────────────────────────────
+function PlayerManagement({onBack,T}){
+  return(
+    <div style={{minHeight:"100vh",background:T.bg,color:T.cream,fontFamily:"'Georgia',serif"}}>
+      <div style={{background:T.headerBg,borderBottom:`2px solid ${T.gold}`,padding:"14px 20px",textAlign:"center",position:"relative"}}>
+        <button style={{position:"absolute",left:"14px",top:"50%",transform:"translateY(-50%)",background:"transparent",border:`1px solid rgba(255,255,255,0.2)`,borderRadius:"6px",color:"rgba(255,255,255,0.6)",fontSize:"11px",padding:"5px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:"4px"}} onClick={onBack}>
+          <IconBack size={12} color="rgba(255,255,255,0.6)"/> Menü
+        </button>
+        <div style={{fontSize:"18px",fontWeight:"900",letterSpacing:"2px",color:T.gold,textTransform:"uppercase",fontFamily:"'Arial Black',sans-serif"}}>👤 Spieler</div>
+        <div style={{fontSize:"10px",color:"rgba(255,255,255,0.5)",letterSpacing:"2px",marginTop:"3px"}}>VERWALTUNG</div>
+      </div>
+      <div style={{padding:"20px",maxWidth:"480px",margin:"0 auto",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"calc(100vh - 70px)"}}>
+        <div style={{textAlign:"center"}}>
+          <div style={{fontSize:"56px",marginBottom:"16px"}}>🚧</div>
+          <div style={{fontSize:"18px",fontWeight:"700",color:T.gold,marginBottom:"8px"}}>Spielerverwaltung</div>
+          <div style={{fontSize:"13px",color:T.muted,marginBottom:"6px"}}>Hier können Spieler erstellt,</div>
+          <div style={{fontSize:"13px",color:T.muted,marginBottom:"20px"}}>bearbeitet und entfernt werden.</div>
+          <div style={{background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"10px",padding:"14px 20px",display:"inline-block"}}>
+            <div style={{fontSize:"11px",color:T.faint,letterSpacing:"1px"}}>COMING SOON</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Tournament Planning ───────────────────────────────────────────────────────
+function TournamentPlanning({config,onStart,onBack,T}){
+  return<AdminSetup onStart={onStart} onBack={onBack} T={T} existingConfig={config}/>;
+}
+
 // ── Root ──────────────────────────────────────────────────────────────────────
 export default function App(){
   const [phase,setPhase]=useState("login");
+  const [adminSection,setAdminSection]=useState(null); // "players"|"planning"|"game"
   const [config,setConfig]=useState(null);
   const [role,setRole]=useState(null);
   const [loading,setLoading]=useState(false);
   const [theme,setTheme]=useState(()=>{try{return localStorage.getItem("ryder_theme")||"dark";}catch(e){return"dark";}});
 
   const changeTheme=t=>{setTheme(t);try{localStorage.setItem("ryder_theme",t);}catch(e){}};
-  const goToLogin=()=>{setPhase("login");setConfig(null);setRole(null);};
+  const goToLogin=()=>{setPhase("login");setConfig(null);setRole(null);setAdminSection(null);};
+  const goToAdminMenu=()=>setAdminSection(null);
 
   const handleLogin=async r=>{
     setRole(r);setLoading(true);
-    try{const s=await getDoc(doc(db,"tournaments","ryder2024"));if(s.exists()){setConfig(s.data());setPhase("game");}else setPhase(r==="admin"?"setup":"waiting");}
-    catch(e){setPhase(r==="admin"?"setup":"waiting");}
+    try{
+      const s=await getDoc(doc(db,"tournaments","ryder2024"));
+      if(s.exists()){
+        setConfig(s.data());
+        if(r==="admin") setPhase("adminMenu");
+        else setPhase("game");
+      } else {
+        if(r==="admin") setPhase("adminMenu");
+        else setPhase("waiting");
+      }
+    }
+    catch(e){
+      if(r==="admin") setPhase("adminMenu");
+      else setPhase("waiting");
+    }
     setLoading(false);
   };
 
   useEffect(()=>{
-    if(phase!=="game")return;
+    if(phase!=="game"&&!(phase==="adminMenu"&&adminSection==="game"))return;
     const u=onSnapshot(doc(db,"tournaments","ryder2024"),s=>{if(s.exists())setConfig(s.data());});
     return()=>u();
-  },[phase]);
+  },[phase,adminSection]);
 
   const T=THEMES[theme];
 
@@ -1215,7 +1324,27 @@ export default function App(){
       </div>
     </div>
   );
-  if(phase==="setup"&&role==="admin")return<AdminSetup onStart={cfg=>{setConfig(cfg);setPhase("game");}} onBack={goToLogin} T={T}/>;
+
+  // Admin-specific routing
+  if(phase==="adminMenu"){
+    if(!adminSection)return(
+      <AdminMenu config={config} onSelect={s=>setAdminSection(s)} onBack={goToLogin} theme={theme} onThemeChange={changeTheme} T={T}/>
+    );
+    if(adminSection==="players")return(
+      <PlayerManagement onBack={goToAdminMenu} T={T}/>
+    );
+    if(adminSection==="planning")return(
+      <AdminSetup
+        onStart={cfg=>{setConfig(cfg);setAdminSection("game");}}
+        onBack={goToAdminMenu} T={T}
+      />
+    );
+    if(adminSection==="game"){
+      if(!config)return<AdminMenu config={config} onSelect={s=>setAdminSection(s)} onBack={goToLogin} theme={theme} onThemeChange={changeTheme} T={T}/>;
+      return<Dashboard config={config} role="admin" onBack={goToAdminMenu} theme={theme} onThemeChange={changeTheme}/>;
+    }
+  }
+
   if(!config)return null;
   return<Dashboard config={config} role={role} onBack={goToLogin} theme={theme} onThemeChange={changeTheme}/>;
 }

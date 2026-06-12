@@ -1,5 +1,6 @@
 {
   "rewrites": [
+    { "source": "/api/send-push", "destination": "/api/send-push.js" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]
 }
