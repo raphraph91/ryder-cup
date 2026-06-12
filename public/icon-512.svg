@@ -1,5 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 192 192">
-  <rect width="192" height="192" rx="40" fill="#0D2B1A"/>
-  <rect x="8" y="8" width="176" height="176" rx="32" fill="#1A4D2E"/>
-  <text x="96" y="130" font-size="100" text-anchor="middle" font-family="Apple Color Emoji,Segoe UI Emoji,sans-serif">⛳</text>
+  <rect width="192" height="192" rx="40" fill="#0A1628"/>
+  <text x="28" y="148" font-family="Georgia,'Times New Roman',serif" font-size="130" font-weight="700" fill="#C9A96E">P</text>
+  <line x1="138" y1="28" x2="138" y2="100" stroke="#C9A96E" stroke-width="8" stroke-linecap="round"/>
+  <path d="M138 28 L168 42 L138 56 Z" fill="#C9A96E"/>
+  <line x1="122" y1="100" x2="154" y2="100" stroke="#C9A96E" stroke-width="8" stroke-linecap="round"/>
 </svg>

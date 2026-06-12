@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { initializeApp } from "firebase/app";
-import { getFirestore, doc, setDoc, onSnapshot, getDoc } from "firebase/firestore";
+import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
 const VERSION = "7";
@@ -185,6 +185,8 @@ const IconSettings=({size=18,color="currentColor"})=><svg width={size} height={s
 const IconBack=({size=14,color="currentColor"})=><svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>;
 const IconChart=({size=16,color="currentColor"})=><svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>;
 const IconUser=({size=14,color="currentColor"})=><svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>;
+const IconPlus=({size=16,color="currentColor"})=><svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>;
+const IconTrash=({size=16,color="currentColor"})=><svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>;
 
 // ── Confetti ──────────────────────────────────────────────────────────────────
 function Confetti({active,onDone}){
@@ -393,17 +395,31 @@ function SetupStep1({onNext,onBack,T}){
   );
 }
 
-// ── Step 2: Player Pool ───────────────────────────────────────────────────────
-function SetupStep2({onNext,onBack,T}){
-  const [players,setPlayers]=useState([
-    {id:"p1",firstName:"",lastName:"",hcp:""},
-    {id:"p2",firstName:"",lastName:"",hcp:""},
-  ]);
-  const addPlayer=()=>setPlayers(p=>[...p,{id:`p${Date.now()}`,firstName:"",lastName:"",hcp:""}]);
-  const upd=(id,f,v)=>setPlayers(p=>p.map(x=>x.id===id?{...x,[f]:v}:x));
+// ── Step 2: Player Pool (loaded from Firestore savedPlayers) ──────────────────
+function SetupStep2({initialPlayers,onNext,onBack,T}){
+  const defaultPool=initialPlayers&&initialPlayers.length>=2?initialPlayers:[
+    {id:"p1",firstName:"",lastName:"",fn:"",ln:"",hcp:""},
+    {id:"p2",firstName:"",lastName:"",fn:"",ln:"",hcp:""},
+  ];
+  const [players,setPlayers]=useState(defaultPool);
+  const fromDB=initialPlayers&&initialPlayers.length>=2;
+
+  const addPlayer=()=>setPlayers(p=>[...p,{id:`p${Date.now()}`,firstName:"",lastName:"",fn:"",ln:"",hcp:""}]);
+  const upd=(id,field,val)=>setPlayers(p=>p.map(x=>{
+    if(x.id!==id)return x;
+    // keep both firstName/fn and lastName/ln in sync
+    if(field==="firstName")return{...x,firstName:val,fn:val};
+    if(field==="lastName")return{...x,lastName:val,ln:val};
+    return{...x,[field]:val};
+  }));
   const rem=id=>setPlayers(p=>p.filter(x=>x.id!==id));
-  const ok=players.every(p=>p.firstName.trim()&&p.lastName.trim()&&p.hcp!=="")&&players.length>=2;
-  const inp={background:T.surface,border:`1px solid ${T.border}`,borderRadius:"6px",color:T.cream,fontSize:"12px",padding:"7px 8px",outline:"none",boxSizing:"border-box"};
+
+  // Normalise: ensure fn/ln are set for players that came from Firestore
+  const norm=(p)=>({...p,firstName:p.firstName||p.fn||"",lastName:p.lastName||p.ln||"",fn:p.fn||p.firstName||"",ln:p.ln||p.lastName||""});
+  const normPlayers=players.map(norm);
+  const ok=normPlayers.every(p=>p.fn.trim()&&p.ln.trim()&&p.hcp!=="")&&normPlayers.length>=2;
+
+  const inp={background:T.surface,border:`1px solid ${T.border}`,borderRadius:"6px",color:T.cream,fontSize:"12px",padding:"7px 8px",outline:"none",boxSizing:"border-box",fontFamily:"'Arial',sans-serif"};
 
   return(
     <div style={{minHeight:"100vh",background:T.bg,color:T.cream,fontFamily:"'Georgia',serif"}}>
@@ -413,28 +429,34 @@ function SetupStep2({onNext,onBack,T}){
         <div style={{fontSize:"10px",color:"rgba(255,255,255,0.5)",letterSpacing:"2px",marginTop:"3px"}}>SPIELER POOL</div>
       </div>
       <div style={{padding:"14px",maxWidth:"480px",margin:"0 auto"}}>
-        <div style={{background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"14px",fontSize:"11px",color:T.muted}}>
-          💡 Alle Spieler hier eintragen – die Team-Zuordnung erfolgt im nächsten Schritt per Drag & Drop
-        </div>
-        <div style={{background:T.cardBg,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"14px"}}>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 56px 20px",gap:"4px",marginBottom:"8px"}}>
-            {["Vorname","Nachname","HCP",""].map((h,i)=><div key={i} style={{fontSize:"9px",color:T.faint,letterSpacing:"1px"}}>{h}</div>)}
+        {fromDB?(
+          <div style={{background:T.elevated,border:`1px solid ${T.gold}55`,borderRadius:"8px",padding:"10px 14px",marginBottom:"14px",fontSize:"11px",color:T.gold,fontFamily:"'Arial',sans-serif"}}>
+            ✓ {players.length} Spieler aus der Spielerverwaltung geladen
           </div>
-          {players.map((p,i)=>(
-            <div key={p.id} style={{display:"grid",gridTemplateColumns:"1fr 1fr 56px 20px",gap:"4px",marginBottom:"6px",alignItems:"center"}}>
-              <input style={inp} placeholder="Vorname" value={p.firstName} onChange={e=>upd(p.id,"firstName",e.target.value)}/>
-              <input style={inp} placeholder="Nachname" value={p.lastName} onChange={e=>upd(p.id,"lastName",e.target.value)}/>
-              <input style={{...inp,textAlign:"center"}} type="number" step="0.1" min="-5" max="54" placeholder="0.0" value={p.hcp} onChange={e=>upd(p.id,"hcp",e.target.value)}/>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",color:players.length>2?"#E05252":T.faint}} onClick={()=>players.length>2&&rem(p.id)}>
+        ):(
+          <div style={{background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"14px",fontSize:"11px",color:T.muted,fontFamily:"'Arial',sans-serif"}}>
+            💡 Tipp: Lege Spieler in der Spielerverwaltung an, dann werden sie hier automatisch geladen.
+          </div>
+        )}
+        <div style={{background:T.cardBg,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"14px"}}>
+          {normPlayers.map((p,i)=>(
+            <div key={p.id} style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"10px",padding:"8px",background:T.surface,borderRadius:"8px",border:`1px solid ${T.border}`}}>
+              <PlayerAvatar name={(p.fn||"?")+(" "+(p.ln||""))} size={36} color={T.blue} photo={p.photo||null}/>
+              <div style={{flex:1,display:"grid",gridTemplateColumns:"1fr 1fr 56px",gap:"4px"}}>
+                <input style={inp} placeholder="Vorname" value={p.fn} onChange={e=>upd(p.id,"firstName",e.target.value)}/>
+                <input style={inp} placeholder="Nachname" value={p.ln} onChange={e=>upd(p.id,"lastName",e.target.value)}/>
+                <input style={{...inp,textAlign:"center"}} inputMode="decimal" placeholder="HCP" value={p.hcp} onChange={e=>upd(p.id,"hcp",e.target.value)}/>
+              </div>
+              <div style={{cursor:"pointer",color:normPlayers.length>2?"#E05252":T.faint}} onClick={()=>normPlayers.length>2&&rem(p.id)}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
               </div>
             </div>
           ))}
-          <button style={{width:"100%",padding:"8px",background:"transparent",border:`1px dashed ${T.gold}55`,borderRadius:"6px",color:T.gold,fontSize:"12px",cursor:"pointer",marginTop:"4px"}} onClick={addPlayer}>+ Spieler hinzufügen</button>
+          <button style={{width:"100%",padding:"8px",background:"transparent",border:`1px dashed ${T.gold}55`,borderRadius:"6px",color:T.gold,fontSize:"12px",cursor:"pointer",marginTop:"4px",fontFamily:"'Arial',sans-serif"}} onClick={addPlayer}>+ Spieler hinzufügen</button>
         </div>
-        <div style={{fontSize:"11px",color:T.muted,textAlign:"center",marginBottom:"14px"}}>{players.length} Spieler im Pool</div>
-        <button style={{width:"100%",padding:"13px",background:`linear-gradient(135deg,${T.gold},#A07830)`,border:"none",borderRadius:"8px",color:T.isDark?"#0D2B1A":"white",fontSize:"14px",fontWeight:"900",letterSpacing:"2px",textTransform:"uppercase",cursor:"pointer",opacity:ok?1:0.4}} onClick={()=>ok&&onNext({playerPool:players})}>Weiter → Teams</button>
-        {!ok&&<div style={{fontSize:"11px",color:T.faint,textAlign:"center",marginTop:"8px"}}>Bitte alle Felder ausfüllen (mind. 2 Spieler)</div>}
+        <div style={{fontSize:"11px",color:T.muted,textAlign:"center",marginBottom:"14px",fontFamily:"'Arial',sans-serif"}}>{normPlayers.length} Spieler im Pool</div>
+        <button style={{width:"100%",padding:"13px",background:`linear-gradient(135deg,${T.gold},#A07830)`,border:"none",borderRadius:"8px",color:T.isDark?"#0D2B1A":"white",fontSize:"14px",fontWeight:"900",letterSpacing:"2px",textTransform:"uppercase",cursor:"pointer",opacity:ok?1:0.4,fontFamily:"'Arial',sans-serif"}} onClick={()=>ok&&onNext({playerPool:normPlayers})}>Weiter → Teams</button>
+        {!ok&&<div style={{fontSize:"11px",color:T.faint,textAlign:"center",marginTop:"8px",fontFamily:"'Arial',sans-serif"}}>Bitte alle Felder ausfüllen (mind. 2 Spieler)</div>}
       </div>
     </div>
   );
@@ -474,12 +496,10 @@ function SetupStep3({t1Name,t2Name,playerPool,onNext,onBack,T}){
       onDragEnd={()=>setDragging(null)}
       style={{display:"flex",alignItems:"center",justifyContent:"space-between",background:T.surface,border:`1px solid ${color||T.border}`,borderRadius:"8px",padding:"6px 10px",marginBottom:"6px",cursor:"grab",userSelect:"none",opacity:dragging?.player.id===player.id?0.4:1}}>
       <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
-        <div style={{width:"28px",height:"28px",borderRadius:"50%",background:(color||T.gold)+"22",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
-          <IconUser size={13} color={color||T.gold}/>
-        </div>
+        <PlayerAvatar name={(player.fn||player.firstName||"?")+" "+(player.ln||player.lastName||"")} size={28} color={color||T.gold} photo={player.photo||null}/>
         <div>
-          <div style={{fontSize:"12px",fontWeight:"600",color:T.cream}}>{player.firstName} {player.lastName}</div>
-          <div style={{fontSize:"10px",color:T.faint}}>HCP {player.hcp}</div>
+          <div style={{fontSize:"12px",fontWeight:"600",color:T.cream,fontFamily:"'Arial',sans-serif"}}>{player.fn||player.firstName} {player.ln||player.lastName}</div>
+          <div style={{fontSize:"10px",color:T.faint,fontFamily:"'Arial',sans-serif"}}>HCP {player.hcp}</div>
         </div>
       </div>
       <div style={{fontSize:"9px",color:T.faint}}>⠿</div>
@@ -550,9 +570,442 @@ function SetupStep3({t1Name,t2Name,playerPool,onNext,onBack,T}){
   );
 }
 
-// ── Step 4: Match Builder (Drag & Drop + Mode) ────────────────────────────────
+// ── Player Avatar ─────────────────────────────────────────────────────────────
+function PlayerAvatar({name,size,color,photo}){
+  size=size||36;
+  const initials=name?name.split(' ').map(p=>p[0]||'').slice(0,2).join('').toUpperCase():'?';
+  return(
+    <div style={{width:size+"px",height:size+"px",borderRadius:"50%",background:color+"22",border:"1.5px solid "+color,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,overflow:"hidden"}}>
+      {photo
+        ?<img src={photo} alt={name} style={{width:"100%",height:"100%",objectFit:"cover",borderRadius:"50%"}}/>
+        :<span style={{fontSize:(size*0.36)+"px",fontWeight:"700",color,fontFamily:"'Arial',sans-serif"}}>{initials}</span>
+      }
+    </div>
+  );
+}
+
+// ── Player Manager ────────────────────────────────────────────────────────────
+function PlayerManager({onBack,T}){
+  const [players,setPlayers]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [editingId,setEditingId]=useState(null);
+  const [showForm,setShowForm]=useState(false);
+  const [fn,setFn]=useState("");
+  const [ln,setLn]=useState("");
+  const [hcp,setHcp]=useState("");
+  const [photo,setPhoto]=useState(null);
+  const [saving,setSaving]=useState(false);
+  const [confirmDelete,setConfirmDelete]=useState(null);
+  const [cropSrc,setCropSrc]=useState(null);
+  const [cropScale,setCropScale]=useState(1);
+
+  useEffect(()=>{
+    getDocs(collection(db,"savedPlayers")).then(snap=>{
+      setPlayers(snap.docs.map(d=>({id:d.id,...d.data()})));
+      setLoading(false);
+    }).catch(()=>setLoading(false));
+  },[]);
+
+  const handlePhotoChange=(e)=>{
+    const file=e.target.files[0];if(!file)return;
+    const reader=new FileReader();
+    reader.onload=ev=>{setCropSrc(ev.target.result);setCropScale(1);};
+    reader.readAsDataURL(file);
+  };
+
+  const cropAndSave=()=>{
+    const size=200;const canvas=document.createElement("canvas");
+    canvas.width=size;canvas.height=size;
+    const ctx=canvas.getContext("2d");
+    const img=new Image();
+    img.onload=()=>{
+      const s=Math.min(img.width,img.height)*cropScale;
+      const sx=(img.width-s)/2;const sy=(img.height-s)/2;
+      ctx.beginPath();ctx.arc(size/2,size/2,size/2,0,Math.PI*2);ctx.clip();
+      ctx.drawImage(img,sx,sy,s,s,0,0,size,size);
+      setPhoto(canvas.toDataURL("image/jpeg",0.8));setCropSrc(null);
+    };
+    img.src=cropSrc;
+  };
+
+  const startEdit=(p)=>{setEditingId(p.id);setFn(p.fn);setLn(p.ln);setHcp(p.hcp||"");setPhoto(p.photo||null);setShowForm(true);};
+  const resetForm=()=>{setEditingId(null);setFn("");setLn("");setHcp("");setPhoto(null);setShowForm(false);};
+
+  const savePlayer=async()=>{
+    if(!fn.trim()||!ln.trim())return;
+    setSaving(true);
+    const id=editingId||("p"+Date.now());
+    const data={fn:fn.trim(),ln:ln.trim(),hcp:hcp||"",photo:photo||null};
+    await setDoc(doc(db,"savedPlayers",id),data).catch(()=>{});
+    if(editingId){setPlayers(prev=>prev.map(p=>p.id===id?{id,...data}:p));}
+    else{setPlayers(prev=>[...prev,{id,...data}]);}
+    setSaving(false);resetForm();
+  };
+
+  const deletePlayer=async(id)=>{
+    await deleteDoc(doc(db,"savedPlayers",id)).catch(()=>{});
+    setPlayers(prev=>prev.filter(p=>p.id!==id));setConfirmDelete(null);
+  };
+
+  const inp={background:T.isDark?"#0A2014":T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",color:T.cream,fontSize:"14px",padding:"10px 12px",outline:"none",boxSizing:"border-box",width:"100%",marginBottom:"10px",fontFamily:"'Arial',sans-serif"};
+
+  return(
+    <div style={{minHeight:"100vh",background:T.bg,color:T.cream,fontFamily:"'Georgia',serif"}}>
+      <div style={{background:T.headerBg,borderBottom:`2px solid ${T.gold}`,padding:"14px 20px",textAlign:"center",position:"relative"}}>
+        <button style={{position:"absolute",left:"14px",top:"50%",transform:"translateY(-50%)",background:"transparent",border:`1px solid rgba(255,255,255,0.2)`,borderRadius:"6px",color:"rgba(255,255,255,0.6)",fontSize:"11px",padding:"5px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:"4px",fontFamily:"'Arial',sans-serif"}} onClick={onBack}>
+          <IconBack size={12} color="rgba(255,255,255,0.6)"/> Menü
+        </button>
+        <div style={{fontSize:"18px",fontWeight:"900",letterSpacing:"2px",color:T.gold,textTransform:"uppercase",fontFamily:"'Arial Black',sans-serif"}}>👤 Spieler</div>
+        <div style={{fontSize:"10px",color:"rgba(255,255,255,0.5)",letterSpacing:"2px",marginTop:"3px"}}>VERWALTUNG</div>
+      </div>
+      <div style={{padding:"14px",maxWidth:"480px",margin:"0 auto"}}>
+
+        {!showForm?(
+          <>
+            <button onClick={()=>setShowForm(true)} style={{width:"100%",padding:"13px",background:`linear-gradient(135deg,${T.gold},#A07830)`,border:"none",borderRadius:"8px",color:T.isDark?"#0D2B1A":"white",fontSize:"14px",fontWeight:"900",letterSpacing:"2px",textTransform:"uppercase",cursor:"pointer",marginBottom:"14px",fontFamily:"'Arial',sans-serif",display:"flex",alignItems:"center",justifyContent:"center",gap:"8px"}}>
+              <IconPlus size={16} color={T.isDark?"#0D2B1A":"white"}/> Spieler hinzufügen
+            </button>
+            {loading&&<div style={{textAlign:"center",padding:"20px",color:T.muted,fontFamily:"'Arial',sans-serif"}}>Lade...</div>}
+            {!loading&&players.length===0&&(
+              <div style={{textAlign:"center",padding:"40px 20px"}}>
+                <div style={{fontSize:"40px",marginBottom:"12px"}}>👤</div>
+                <div style={{color:T.gold,fontSize:"16px",fontFamily:"'Georgia',serif",marginBottom:"8px"}}>Noch keine Spieler</div>
+                <div style={{color:T.muted,fontSize:"13px",fontFamily:"'Arial',sans-serif"}}>Füge Spieler hinzu um sie in Turnieren zu verwenden</div>
+              </div>
+            )}
+            {players.map(p=>(
+              <div key={p.id} style={{background:T.cardBg,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"12px 14px",marginBottom:"10px",display:"flex",alignItems:"center",gap:"12px"}}>
+                <PlayerAvatar name={p.fn+" "+p.ln} size={48} color={T.blue} photo={p.photo}/>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:"14px",fontWeight:"700",color:T.cream,fontFamily:"'Arial',sans-serif"}}>{p.fn} {p.ln}</div>
+                  <div style={{fontSize:"11px",color:T.muted,fontFamily:"'Arial',sans-serif"}}>{p.hcp?`HCP ${p.hcp}`:"Kein HCP"}</div>
+                </div>
+                <div style={{display:"flex",gap:"6px"}}>
+                  <button onClick={()=>startEdit(p)} style={{padding:"7px 12px",background:"transparent",border:`1px solid ${T.border}`,borderRadius:"6px",color:T.muted,fontSize:"11px",cursor:"pointer"}}>✏️</button>
+                  <button onClick={()=>setConfirmDelete(p)} style={{padding:"7px 10px",background:"transparent",border:`1px solid #E0525244`,borderRadius:"6px",color:"#E05252",cursor:"pointer"}}>
+                    <IconTrash size={14} color="#E05252"/>
+                  </button>
+                </div>
+              </div>
+            ))}
+          </>
+        ):(
+          <div>
+            <div style={{fontSize:"14px",fontWeight:"700",color:T.gold,fontFamily:"'Georgia',serif",marginBottom:"16px"}}>{editingId?"Spieler bearbeiten":"Neuer Spieler"}</div>
+            <div style={{display:"flex",justifyContent:"center",marginBottom:"16px"}}>
+              <div style={{position:"relative"}}>
+                <PlayerAvatar name={fn&&ln?fn+" "+ln:"?"} size={80} color={T.blue} photo={photo}/>
+                <label style={{position:"absolute",bottom:0,right:0,width:"28px",height:"28px",background:`linear-gradient(135deg,${T.gold},#A07830)`,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer"}}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#0D2B1A" strokeWidth="2.5" strokeLinecap="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                  <input type="file" accept="image/*" onChange={handlePhotoChange} style={{display:"none"}}/>
+                </label>
+              </div>
+            </div>
+            <div style={{fontSize:"10px",color:T.faint,textAlign:"center",marginBottom:"16px",fontFamily:"'Arial',sans-serif"}}>Tippe das Kamera-Icon für Foto oder Mediathek</div>
+            <div style={{fontSize:"10px",color:T.muted,letterSpacing:"1px",marginBottom:"4px",fontFamily:"'Arial',sans-serif"}}>VORNAME *</div>
+            <input style={inp} placeholder="Vorname" value={fn} onChange={e=>setFn(e.target.value)}/>
+            <div style={{fontSize:"10px",color:T.muted,letterSpacing:"1px",marginBottom:"4px",fontFamily:"'Arial',sans-serif"}}>NACHNAME *</div>
+            <input style={inp} placeholder="Nachname" value={ln} onChange={e=>setLn(e.target.value)}/>
+            <div style={{fontSize:"10px",color:T.muted,letterSpacing:"1px",marginBottom:"4px",fontFamily:"'Arial',sans-serif"}}>HANDICAP</div>
+            <input style={{...inp,marginBottom:"20px"}} inputMode="decimal" placeholder="z.B. 8.4" value={hcp} onChange={e=>setHcp(e.target.value)}/>
+            <button onClick={savePlayer} disabled={!fn.trim()||!ln.trim()||saving}
+              style={{width:"100%",padding:"13px",background:(!fn.trim()||!ln.trim())?T.elevated:`linear-gradient(135deg,${T.gold},#A07830)`,border:"none",borderRadius:"8px",color:(!fn.trim()||!ln.trim())?T.muted:T.isDark?"#0D2B1A":"white",fontSize:"14px",fontWeight:"900",letterSpacing:"2px",textTransform:"uppercase",cursor:(!fn.trim()||!ln.trim())?"not-allowed":"pointer",marginBottom:"8px",fontFamily:"'Arial',sans-serif",opacity:(!fn.trim()||!ln.trim())?0.5:1}}>
+              {saving?"Speichere...":"Speichern"}
+            </button>
+            <button onClick={resetForm} style={{width:"100%",padding:"10px",background:"transparent",border:`1px solid ${T.border}`,borderRadius:"8px",color:T.muted,fontSize:"13px",cursor:"pointer",fontFamily:"'Arial',sans-serif"}}>Abbrechen</button>
+          </div>
+        )}
+      </div>
+
+      {cropSrc&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",zIndex:400,padding:"20px"}}>
+          <div style={{fontSize:"14px",fontWeight:"700",color:T.gold,fontFamily:"'Georgia',serif",marginBottom:"16px"}}>Foto zuschneiden</div>
+          <div style={{position:"relative",width:"200px",height:"200px",borderRadius:"50%",overflow:"hidden",border:`3px solid ${T.gold}`,marginBottom:"16px"}}>
+            <img src={cropSrc} style={{width:"100%",height:"100%",objectFit:"cover",transform:`scale(${cropScale})`,transformOrigin:"center"}} alt="crop"/>
+          </div>
+          <div style={{width:"100%",maxWidth:"280px",marginBottom:"8px"}}>
+            <div style={{fontSize:"10px",color:T.muted,fontFamily:"'Arial',sans-serif",marginBottom:"4px"}}>Zoom</div>
+            <input type="range" min="1" max="3" step="0.05" value={cropScale} onChange={e=>setCropScale(Number(e.target.value))} style={{width:"100%",accentColor:T.gold}}/>
+          </div>
+          <div style={{display:"flex",gap:"10px",width:"100%",maxWidth:"280px"}}>
+            <button onClick={cropAndSave} style={{flex:1,padding:"12px",background:`linear-gradient(135deg,${T.gold},#A07830)`,border:"none",borderRadius:"8px",color:T.isDark?"#0D2B1A":"white",fontSize:"13px",fontWeight:"900",cursor:"pointer",fontFamily:"'Arial',sans-serif"}}>Übernehmen ✓</button>
+            <button onClick={()=>setCropSrc(null)} style={{flex:1,padding:"12px",background:"transparent",border:`1px solid ${T.border}`,borderRadius:"8px",color:T.muted,fontSize:"13px",cursor:"pointer",fontFamily:"'Arial',sans-serif"}}>Abbrechen</button>
+          </div>
+        </div>
+      )}
+
+      {confirmDelete&&(
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:300,padding:"20px"}} onClick={()=>setConfirmDelete(null)}>
+          <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"16px",padding:"24px 20px",maxWidth:"300px",width:"100%",textAlign:"center"}} onClick={e=>e.stopPropagation()}>
+            <div style={{fontSize:"32px",marginBottom:"12px"}}>🗑</div>
+            <div style={{fontSize:"15px",fontWeight:"700",color:T.cream,fontFamily:"'Georgia',serif",marginBottom:"6px"}}>{confirmDelete.fn} {confirmDelete.ln} löschen?</div>
+            <div style={{fontSize:"12px",color:T.muted,marginBottom:"20px",fontFamily:"'Arial',sans-serif"}}>Der Spieler wird aus dem Pool entfernt.</div>
+            <button style={{width:"100%",padding:"11px",background:"#E05252",border:"none",borderRadius:"8px",color:"white",fontSize:"13px",fontWeight:"700",cursor:"pointer",marginBottom:"8px",fontFamily:"'Arial',sans-serif"}} onClick={()=>deletePlayer(confirmDelete.id)}>Ja, löschen</button>
+            <button style={{width:"100%",padding:"11px",background:"transparent",border:`1px solid ${T.border}`,borderRadius:"8px",color:T.muted,fontSize:"13px",cursor:"pointer",fontFamily:"'Arial',sans-serif"}} onClick={()=>setConfirmDelete(null)}>Abbrechen</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Step 4: Match Builder (Tap-to-Assign + Add/Remove Matches) ────────────────
 function SetupStep4({t1Name,t2Name,matchCount,t1Players,t2Players,onStart,onBack,T}){
   const [saving,setSaving]=useState(false);
+  const [activeDay,setActiveDay]=useState(0);
+  const [selectedPlayer,setSelectedPlayer]=useState(null); // {player, team}
+
+  const mkMatch=(id)=>({id,name:"Match "+id,pin:"MATCH"+id,mode:"scramble",t1Players:[],t2Players:[]});
+
+  const [day1,setDay1]=useState(()=>Array.from({length:matchCount},(_,i)=>mkMatch(i+1)));
+  const [day2,setDay2]=useState(()=>Array.from({length:matchCount},(_,i)=>mkMatch(i+1+matchCount)));
+
+  const matches=activeDay===0?day1:day2;
+  const setMatches=activeDay===0?setDay1:setDay2;
+
+  const addMatch=()=>setMatches(prev=>{
+    const newId=prev.length>0?Math.max(...prev.map(m=>m.id))+1:1;
+    return[...prev,mkMatch(newId)];
+  });
+  const removeMatch=(id)=>setMatches(prev=>prev.filter(m=>m.id!==id));
+
+  const usedT1=new Set(matches.flatMap(m=>m.t1Players.map(p=>p.id)));
+  const usedT2=new Set(matches.flatMap(m=>m.t2Players.map(p=>p.id)));
+  const availT1=t1Players.filter(p=>!usedT1.has(p.id));
+  const availT2=t2Players.filter(p=>!usedT2.has(p.id));
+
+  const handlePlayerTap=(player,team)=>{
+    if(selectedPlayer&&selectedPlayer.player.id===player.id){setSelectedPlayer(null);}
+    else{setSelectedPlayer({player,team});}
+  };
+
+  const handleSlotTap=(matchIdx,teamKey)=>{
+    if(!selectedPlayer)return;
+    if(selectedPlayer.team!==teamKey){setSelectedPlayer(null);return;}
+    const k=teamKey==="t1"?"t1Players":"t2Players";
+    setMatches(prev=>prev.map((m,i)=>{
+      if(i!==matchIdx)return m;
+      const isPairs=GAME_MODES[m.mode]?.pairs!==false;
+      const limit=isPairs?2:1;
+      if(m[k].length>=limit||m[k].find(p=>p.id===selectedPlayer.player.id))return m;
+      return{...m,[k]:[...m[k],selectedPlayer.player]};
+    }));
+    setSelectedPlayer(null);
+  };
+
+  const removeFromMatch=(player,teamKey,mi)=>{
+    setMatches(prev=>prev.map((m,idx)=>{
+      if(idx!==mi)return m;
+      const k=teamKey==="t1"?"t1Players":"t2Players";
+      return{...m,[k]:m[k].filter(p=>p.id!==player.id)};
+    }));
+  };
+
+  const setMode=(mi,mode)=>{
+    setMatches(prev=>prev.map((m,idx)=>{
+      if(idx!==mi)return m;
+      const isPairs=GAME_MODES[mode]?.pairs!==false;
+      return{...m,mode,t1Players:isPairs?m.t1Players:m.t1Players.slice(0,1),t2Players:isPairs?m.t2Players:m.t2Players.slice(0,1)};
+    }));
+  };
+
+  const checkDay=(dm)=>dm.length>0&&dm.every(m=>{
+    const isPairs=GAME_MODES[m.mode]?.pairs!==false;
+    const need=isPairs?2:1;
+    return m.t1Players.length>=need&&m.t2Players.length>=need;
+  });
+  const bothFilled=checkDay(day1)&&checkDay(day2);
+
+  const Pill=({player,color,onRemove})=>(
+    <div style={{display:"inline-flex",alignItems:"center",gap:"4px",background:color+"22",border:`1px solid ${color}55`,borderRadius:"20px",padding:"2px 6px 2px 4px",fontSize:"11px",color,marginBottom:"3px",fontFamily:"'Arial',sans-serif"}}>
+      <PlayerAvatar name={player.fn+" "+player.ln} size={18} color={color} photo={player.photo}/>
+      {player.fn} {player.ln[0]}.
+      <span style={{cursor:"pointer",opacity:0.7,marginLeft:"2px"}} onClick={e=>{e.stopPropagation();onRemove();}}>×</span>
+    </div>
+  );
+
+  return(
+    <div style={{minHeight:"100vh",background:T.bg,color:T.cream,fontFamily:"'Georgia',serif"}}>
+      <div style={{background:T.headerBg,borderBottom:`2px solid ${T.gold}`,padding:"14px 20px",textAlign:"center",position:"relative"}}>
+        <button style={{position:"absolute",left:"14px",top:"50%",transform:"translateY(-50%)",background:"transparent",border:`1px solid rgba(255,255,255,0.2)`,borderRadius:"6px",color:"rgba(255,255,255,0.6)",fontSize:"11px",padding:"5px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:"4px",fontFamily:"'Arial',sans-serif"}} onClick={onBack}>
+          <IconBack size={12} color="rgba(255,255,255,0.6)"/> Zurück
+        </button>
+        <div style={{fontSize:"18px",fontWeight:"900",letterSpacing:"2px",color:T.gold,textTransform:"uppercase",fontFamily:"'Arial Black',sans-serif"}}>📋 Planung</div>
+        <div style={{fontSize:"10px",color:"rgba(255,255,255,0.5)",letterSpacing:"2px",marginTop:"3px"}}>MATCHES & SPIELERZUORDNUNG</div>
+      </div>
+      <div style={{padding:"14px",maxWidth:"480px",margin:"0 auto"}}>
+
+        {/* Day tabs */}
+        <div style={{display:"flex",marginBottom:"14px",borderRadius:"8px",overflow:"hidden",border:`1px solid ${T.border}`}}>
+          {[["Tag 1 – Riedhof","riedhof"],["Tag 2 – Bergkramer","bergkramerhof"]].map(([l],i)=>(
+            <button key={i} style={{flex:1,padding:"10px 6px",background:activeDay===i?T.elevated:T.isDark?"#0A2014":T.bg,border:"none",borderLeft:i>0?`1px solid ${T.border}`:"none",color:activeDay===i?T.gold:T.muted,cursor:"pointer",fontSize:"10px",letterSpacing:"1px",textTransform:"uppercase",fontWeight:activeDay===i?"700":"400",fontFamily:"'Arial',sans-serif"}}
+              onClick={()=>{setActiveDay(i);setSelectedPlayer(null);}}>{l}</button>
+          ))}
+        </div>
+
+        {/* Tap instruction */}
+        {selectedPlayer?(
+          <div style={{background:T.gold+"22",border:`1px solid ${T.gold}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"12px",display:"flex",alignItems:"center",gap:"10px"}}>
+            <PlayerAvatar name={selectedPlayer.player.fn+" "+selectedPlayer.player.ln} size={28} color={selectedPlayer.team==="t1"?T.blue:T.red} photo={selectedPlayer.player.photo}/>
+            <div>
+              <div style={{fontSize:"12px",fontWeight:"700",color:T.gold,fontFamily:"'Arial',sans-serif"}}>{selectedPlayer.player.fn} {selectedPlayer.player.ln} ausgewählt</div>
+              <div style={{fontSize:"10px",color:T.muted,fontFamily:"'Arial',sans-serif"}}>Tippe einen freien Match-Slot unten</div>
+            </div>
+            <button onClick={()=>setSelectedPlayer(null)} style={{marginLeft:"auto",background:"transparent",border:"none",color:T.muted,fontSize:"20px",cursor:"pointer"}}>×</button>
+          </div>
+        ):(
+          <div style={{background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"12px",fontSize:"11px",color:T.muted,fontFamily:"'Arial',sans-serif",display:"flex",alignItems:"center",gap:"8px"}}>
+            <span style={{fontSize:"16px"}}>👆</span>
+            <span>Spieler antippen → dann Match-Slot antippen</span>
+          </div>
+        )}
+
+        {/* Available players */}
+        <div style={{display:"flex",gap:"8px",marginBottom:"14px"}}>
+          {[[availT1,t1Name,T.blue,"t1"],[availT2,t2Name,T.red,"t2"]].map(([avail,name,color,team])=>(
+            <div key={team} style={{flex:1}}>
+              <div style={{fontSize:"9px",color,letterSpacing:"1px",marginBottom:"5px",textTransform:"uppercase",fontFamily:"'Arial',sans-serif"}}>{name} ({avail.length})</div>
+              <div style={{background:T.isDark?"#0A2014":T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"5px",minHeight:"36px"}}>
+                {avail.length===0
+                  ?<div style={{fontSize:"10px",color:T.faint,textAlign:"center",padding:"6px 0",fontFamily:"'Arial',sans-serif"}}>Alle zugeteilt ✓</div>
+                  :avail.map(p=>{
+                    const isSel=selectedPlayer&&selectedPlayer.player.id===p.id;
+                    return(
+                      <div key={p.id} onClick={()=>handlePlayerTap(p,team)}
+                        style={{display:"flex",alignItems:"center",gap:"6px",padding:"5px 7px",marginBottom:"3px",borderRadius:"6px",background:isSel?color+"22":"transparent",border:`1px solid ${isSel?color:T.border}`,cursor:"pointer",transition:"all 0.15s"}}>
+                        <PlayerAvatar name={p.fn+" "+p.ln} size={26} color={color} photo={p.photo}/>
+                        <div>
+                          <div style={{fontSize:"11px",color:isSel?color:T.cream,fontWeight:isSel?"700":"400",fontFamily:"'Arial',sans-serif"}}>{p.fn} {p.ln}</div>
+                          <div style={{fontSize:"9px",color:T.faint,fontFamily:"'Arial',sans-serif"}}>HCP {p.hcp||"–"}</div>
+                        </div>
+                        {isSel&&<div style={{marginLeft:"auto",fontSize:"12px",color}}>✓</div>}
+                      </div>
+                    );
+                  })
+                }
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Match cards */}
+        {matches.map((m,mi)=>{
+          const isPairs=GAME_MODES[m.mode]?.pairs!==false;
+          const limit=isPairs?2:1;
+          return(
+            <div key={m.id} style={{background:T.cardBg,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"12px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}>
+                <div style={{fontSize:"13px",fontWeight:"900",color:T.gold,fontFamily:"'Arial Black',sans-serif"}}>{m.name}</div>
+                <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
+                  <div style={{fontSize:"9px",color:T.faint,fontFamily:"monospace"}}>{m.pin}</div>
+                  <button onClick={()=>removeMatch(m.id)} style={{width:"22px",height:"22px",borderRadius:"50%",background:"#E0525222",border:"1px solid #E0525255",color:"#E05252",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"14px",lineHeight:1}}>×</button>
+                </div>
+              </div>
+
+              {/* Mode selector */}
+              <div style={{marginBottom:"8px"}}>
+                <div style={{fontSize:"9px",color:T.muted,letterSpacing:"1px",marginBottom:"4px",textTransform:"uppercase",fontFamily:"'Arial',sans-serif"}}>Spielmodus</div>
+                <div style={{display:"flex",gap:"4px",flexWrap:"wrap"}}>
+                  {Object.entries(GAME_MODES).map(([k,v])=>(
+                    <button key={k} onClick={()=>setMode(mi,k)} style={{padding:"4px 8px",borderRadius:"6px",border:`1px solid ${m.mode===k?T.gold:T.border}`,background:m.mode===k?T.gold+"22":T.surface,color:m.mode===k?T.gold:T.muted,fontSize:"10px",cursor:"pointer",fontFamily:"'Arial',sans-serif"}}>
+                      {v.icon} {v.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Player slots */}
+              <div style={{display:"flex",gap:"8px"}}>
+                {[[m.t1Players,T.blue,t1Name,"t1"],[m.t2Players,T.red,t2Name,"t2"]].map(([players,color,teamName,teamKey])=>{
+                  const isTarget=selectedPlayer&&selectedPlayer.team===teamKey&&players.length<limit;
+                  const hcpVal=players.length===limit?(limit===2?calcTeamHcp(parseFloat(players[0].hcp||0),parseFloat(players[1].hcp||0)):parseFloat(players[0]?.hcp||0)):null;
+                  return(
+                    <div key={teamKey} style={{flex:1}}>
+                      <div style={{fontSize:"9px",color,letterSpacing:"1px",marginBottom:"4px",fontFamily:"'Arial',sans-serif"}}>{teamName}</div>
+                      <div onClick={()=>handleSlotTap(mi,teamKey)}
+                        style={{minHeight:"52px",background:isTarget?color+"18":(T.isDark?"#0A2014":T.elevated),border:`2px ${isTarget?"solid":"dashed"} ${isTarget?color:T.border}`,borderRadius:"8px",padding:"6px",cursor:isTarget?"pointer":"default",transition:"all 0.15s"}}>
+                        {players.length===0&&<div style={{fontSize:"10px",color:isTarget?color:T.faint,textAlign:"center",padding:"6px 0",fontFamily:"'Arial',sans-serif"}}>{isTarget?"Hier tippen ✓":"Leer ("+limit+")"}</div>}
+                        <div style={{display:"flex",flexWrap:"wrap",gap:"3px"}}>
+                          {players.map(p=><Pill key={p.id} player={p} color={color} onRemove={()=>removeFromMatch(p,teamKey,mi)}/>)}
+                        </div>
+                        {players.length>0&&players.length<limit&&<div style={{fontSize:"9px",color:isTarget?color:T.faint,marginTop:"3px",fontFamily:"'Arial',sans-serif"}}>{isTarget?"Hier tippen →":"+1 weiterer"}</div>}
+                      </div>
+                      {hcpVal!==null&&<div style={{fontSize:"9px",color:color+"99",marginTop:"3px",fontFamily:"'Arial',sans-serif"}}>Team HCP: {hcpVal}</div>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Add match button */}
+        <button onClick={addMatch} style={{width:"100%",padding:"10px",background:"transparent",border:`1px dashed ${T.gold}55`,borderRadius:"8px",color:T.gold,fontSize:"12px",cursor:"pointer",fontFamily:"'Arial',sans-serif",marginBottom:"12px",display:"flex",alignItems:"center",justifyContent:"center",gap:"6px"}}>
+          <IconPlus size={13} color={T.gold}/> Match hinzufügen
+        </button>
+
+        <button style={{width:"100%",padding:"13px",background:`linear-gradient(135deg,${T.gold},#A07830)`,border:"none",borderRadius:"8px",color:T.isDark?"#0D2B1A":"white",fontSize:"14px",fontWeight:"900",letterSpacing:"2px",textTransform:"uppercase",cursor:"pointer",opacity:bothFilled?1:0.4}}
+          onClick={async()=>{
+            if(!bothFilled)return;
+            setSaving(true);
+            const buildMatch=(m)=>({
+              id:m.id,name:m.name,pin:m.pin,mode:m.mode,
+              t1Pair:m.t1Players.map(p=>`${p.fn} ${p.ln}`),
+              t2Pair:m.t2Players.map(p=>`${p.fn} ${p.ln}`),
+              teamHcp1:m.t1Players.length>=2?calcTeamHcp(parseFloat(m.t1Players[0].hcp||0),parseFloat(m.t1Players[1].hcp||0)):(m.t1Players[0]?parseFloat(m.t1Players[0].hcp||0):null),
+              teamHcp2:m.t2Players.length>=2?calcTeamHcp(parseFloat(m.t2Players[0].hcp||0),parseFloat(m.t2Players[1].hcp||0)):(m.t2Players[0]?parseFloat(m.t2Players[0].hcp||0):null),
+              scores:emptyScores(),
+            });
+            const days=[
+              {id:0,label:"Tag 1 – Riedhof",courseKey:"riedhof",matches:day1.map(buildMatch)},
+              {id:1,label:"Tag 2 – Bergkramerhof",courseKey:"bergkramerhof",matches:day2.map(buildMatch)},
+            ];
+            const config={t1Name,t2Name,t1Players,t2Players,days,phase:"game"};
+            await saveTournament(config);
+            onStart(config);
+          }}
+          disabled={saving}>
+          {saving?"Speichere...":"Turnier starten 🏌️"}
+        </button>
+        {!bothFilled&&<div style={{fontSize:"11px",color:T.faint,textAlign:"center",marginTop:"8px",fontFamily:"'Arial',sans-serif"}}>Bitte alle Matches für beide Tage befüllen</div>}
+      </div>
+    </div>
+  );
+}
+
+function AdminSetup({onStart,onBack,T}){
+  const [step,setStep]=useState(1);
+  const [d1,setD1]=useState(null);
+  const [d2,setD2]=useState(null);
+  const [d3,setD3]=useState(null);
+  // Load players from Firestore for step 2 if not entered manually
+  if(step===1)return<SetupStep1 onNext={d=>{setD1(d);setStep(2);}} onBack={onBack} T={T}/>;
+  if(step===2)return<SetupStep2PlayerLoader onNext={d=>{setD2(d);setStep(3);}} onBack={()=>setStep(1)} T={T}/>;
+  if(step===3)return<SetupStep3 {...d1} {...d2} onNext={d=>{setD3(d);setStep(4);}} onBack={()=>setStep(2)} T={T}/>;
+  return<SetupStep4 {...d1} {...d3} onStart={onStart} onBack={()=>setStep(3)} T={T}/>;
+}
+
+// Step 2 now loads players from Firestore savedPlayers
+function SetupStep2PlayerLoader({onNext,onBack,T}){
+  const [players,setPlayers]=useState(null);
+  const [loading,setLoading]=useState(true);
+
+  useEffect(()=>{
+    getDocs(collection(db,"savedPlayers")).then(snap=>{
+      const saved=snap.docs.map(d=>({id:d.id,...d.data()}));
+      // Map fn/ln to firstName/lastName for compatibility with SetupStep2
+      const mapped=saved.map(p=>({...p,firstName:p.fn,lastName:p.ln}));
+      setPlayers(mapped);setLoading(false);
+    }).catch(()=>{setPlayers([]);setLoading(false);});
+  },[]);
+
+  if(loading)return(
+    <div style={{minHeight:"100vh",background:T.bg,color:T.cream,fontFamily:"'Georgia',serif",display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{textAlign:"center"}}><div style={{fontSize:"40px",marginBottom:"12px"}}>⛳</div><div style={{color:T.muted,fontSize:"14px",letterSpacing:"2px",fontFamily:"'Arial',sans-serif"}}>Lade Spieler...</div></div>
+    </div>
+  );
+  return<SetupStep2 initialPlayers={players} onNext={onNext} onBack={onBack} T={T}/>;
+}  const [saving,setSaving]=useState(false);
   const [activeDay,setActiveDay]=useState(0);
 
   const mkEmptyMatches=(offset=0)=>Array.from({length:matchCount},(_,i)=>({
@@ -735,16 +1188,6 @@ function SetupStep4({t1Name,t2Name,matchCount,t1Players,t2Players,onStart,onBack
   );
 }
 
-function AdminSetup({onStart,onBack,T}){
-  const [step,setStep]=useState(1);
-  const [d1,setD1]=useState(null);
-  const [d2,setD2]=useState(null);
-  const [d3,setD3]=useState(null);
-  if(step===1)return<SetupStep1 onNext={d=>{setD1(d);setStep(2);}} onBack={onBack} T={T}/>;
-  if(step===2)return<SetupStep2 onNext={d=>{setD2(d);setStep(3);}} onBack={()=>setStep(1)} T={T}/>;
-  if(step===3)return<SetupStep3 {...d1} {...d2} onNext={d=>{setD3(d);setStep(4);}} onBack={()=>setStep(2)} T={T}/>;
-  return<SetupStep4 {...d1} {...d3} onStart={onStart} onBack={()=>setStep(3)} T={T}/>;
-}
 
 // ── Score Modal ───────────────────────────────────────────────────────────────
 function ScoreModal({match,holeIndex,t1Name,t2Name,existing,par,onSave,onClose,T}){
@@ -1230,39 +1673,93 @@ function AdminMenu({config,onSelect,onBack,theme,onThemeChange,T}){
   );
 }
 
-// ── Player Management (Placeholder) ──────────────────────────────────────────
-function PlayerManagement({onBack,T}){
-  return(
+// ── Root ──────────────────────────────────────────────────────────────────────
+export default function App(){
+  const [phase,setPhase]=useState("login");
+  const [adminSection,setAdminSection]=useState(null); // "players"|"planning"|"game"
+  const [config,setConfig]=useState(null);
+  const [role,setRole]=useState(null);
+  const [loading,setLoading]=useState(false);
+  const [theme,setTheme]=useState(()=>{try{return localStorage.getItem("ryder_theme")||"dark";}catch(e){return"dark";}});
+
+  const changeTheme=t=>{setTheme(t);try{localStorage.setItem("ryder_theme",t);}catch(e){}};
+  const goToLogin=()=>{setPhase("login");setConfig(null);setRole(null);setAdminSection(null);};
+  const goToAdminMenu=()=>setAdminSection(null);
+
+  const handleLogin=async r=>{
+    setRole(r);setLoading(true);
+    try{
+      const s=await getDoc(doc(db,"tournaments","ryder2024"));
+      if(s.exists()){
+        setConfig(s.data());
+        if(r==="admin") setPhase("adminMenu");
+        else setPhase("game");
+      } else {
+        if(r==="admin") setPhase("adminMenu");
+        else setPhase("waiting");
+      }
+    }
+    catch(e){
+      if(r==="admin") setPhase("adminMenu");
+      else setPhase("waiting");
+    }
+    setLoading(false);
+  };
+
+  useEffect(()=>{
+    if(phase!=="game"&&!(phase==="adminMenu"&&adminSection==="game"))return;
+    const u=onSnapshot(doc(db,"tournaments","ryder2024"),s=>{if(s.exists())setConfig(s.data());});
+    return()=>u();
+  },[phase,adminSection]);
+
+  const T=THEMES[theme];
+
+  if(phase==="login")return<Login onLogin={handleLogin}/>;
+  if(loading)return(
+    <div style={{minHeight:"100vh",background:T.bg,color:T.cream,fontFamily:"'Georgia',serif",display:"flex",alignItems:"center",justifyContent:"center"}}>
+      <div style={{textAlign:"center"}}><div style={{fontSize:"40px",marginBottom:"12px"}}>⛳</div><div style={{color:T.muted,fontSize:"14px",letterSpacing:"2px"}}>Lade Turnier...</div></div>
+    </div>
+  );
+  if(phase==="waiting")return(
     <div style={{minHeight:"100vh",background:T.bg,color:T.cream,fontFamily:"'Georgia',serif"}}>
       <div style={{background:T.headerBg,borderBottom:`2px solid ${T.gold}`,padding:"14px 20px",textAlign:"center",position:"relative"}}>
-        <button style={{position:"absolute",left:"14px",top:"50%",transform:"translateY(-50%)",background:"transparent",border:`1px solid rgba(255,255,255,0.2)`,borderRadius:"6px",color:"rgba(255,255,255,0.6)",fontSize:"11px",padding:"5px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:"4px"}} onClick={onBack}>
-          <IconBack size={12} color="rgba(255,255,255,0.6)"/> Menü
-        </button>
-        <div style={{fontSize:"18px",fontWeight:"900",letterSpacing:"2px",color:T.gold,textTransform:"uppercase",fontFamily:"'Arial Black',sans-serif"}}>👤 Spieler</div>
-        <div style={{fontSize:"10px",color:"rgba(255,255,255,0.5)",letterSpacing:"2px",marginTop:"3px"}}>VERWALTUNG</div>
+        <BackButton onConfirm={goToLogin} T={T}/>
+        <div style={{fontSize:"18px",fontWeight:"900",color:T.gold,textTransform:"uppercase",fontFamily:"'Arial Black',sans-serif"}}>⛳ Ryder Cup</div>
       </div>
-      <div style={{padding:"20px",maxWidth:"480px",margin:"0 auto",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"calc(100vh - 70px)"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"calc(100vh - 70px)",padding:"20px"}}>
         <div style={{textAlign:"center"}}>
-          <div style={{fontSize:"56px",marginBottom:"16px"}}>🚧</div>
-          <div style={{fontSize:"18px",fontWeight:"700",color:T.gold,marginBottom:"8px"}}>Spielerverwaltung</div>
-          <div style={{fontSize:"13px",color:T.muted,marginBottom:"6px"}}>Hier können Spieler erstellt,</div>
-          <div style={{fontSize:"13px",color:T.muted,marginBottom:"20px"}}>bearbeitet und entfernt werden.</div>
-          <div style={{background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"10px",padding:"14px 20px",display:"inline-block"}}>
-            <div style={{fontSize:"11px",color:T.faint,letterSpacing:"1px"}}>COMING SOON</div>
-          </div>
+          <div style={{fontSize:"40px",marginBottom:"12px"}}>⏳</div>
+          <div style={{color:T.gold,fontSize:"16px",fontWeight:"700",marginBottom:"8px"}}>Turnier noch nicht gestartet</div>
+          <div style={{color:T.muted,fontSize:"13px",marginBottom:"12px"}}>Der Admin muss zuerst das Turnier einrichten.</div>
+          <RoleBadge role={role} T={T}/>
         </div>
       </div>
     </div>
   );
-}
 
-// ── Tournament Planning ───────────────────────────────────────────────────────
-function TournamentPlanning({config,onStart,onBack,T}){
-  return<AdminSetup onStart={onStart} onBack={onBack} T={T} existingConfig={config}/>;
-}
+  // Admin-specific routing
+  if(phase==="adminMenu"){
+    if(!adminSection)return(
+      <AdminMenu config={config} onSelect={s=>setAdminSection(s)} onBack={goToLogin} theme={theme} onThemeChange={changeTheme} T={T}/>
+    );
+    if(adminSection==="players")return(
+      <PlayerManager onBack={goToAdminMenu} T={T}/>
+    );
+    if(adminSection==="planning")return(
+      <AdminSetup
+        onStart={cfg=>{setConfig(cfg);setAdminSection("game");}}
+        onBack={goToAdminMenu} T={T}
+      />
+    );
+    if(adminSection==="game"){
+      if(!config)return<AdminMenu config={config} onSelect={s=>setAdminSection(s)} onBack={goToLogin} theme={theme} onThemeChange={changeTheme} T={T}/>;
+      return<Dashboard config={config} role="admin" onBack={goToAdminMenu} theme={theme} onThemeChange={changeTheme}/>;
+    }
+  }
 
-// ── Root ──────────────────────────────────────────────────────────────────────
-export default function App(){
+  if(!config)return null;
+  return<Dashboard config={config} role={role} onBack={goToLogin} theme={theme} onThemeChange={changeTheme}/>;
+}
   const [phase,setPhase]=useState("login");
   const [adminSection,setAdminSection]=useState(null); // "players"|"planning"|"game"
   const [config,setConfig]=useState(null);

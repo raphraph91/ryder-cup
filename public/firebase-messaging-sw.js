@@ -2,22 +2,18 @@ importScripts('https://www.gstatic.com/firebasejs/10.7.0/firebase-app-compat.js'
 importScripts('https://www.gstatic.com/firebasejs/10.7.0/firebase-messaging-compat.js');
 
 firebase.initializeApp({
-  apiKey: "AIzaSyBLlzavBNImCRG0JacPZWdVIxezxKiqHcc",
-  authDomain: "rydercup-6f9d1.firebaseapp.com",
-  projectId: "rydercup-6f9d1",
-  storageBucket: "rydercup-6f9d1.firebasestorage.app",
-  messagingSenderId: "198567886432",
-  appId: "1:198567886432:web:e02904e589913db76c4d05"
+  apiKey: "AIzaSyAUT_w03rbgMPtEkz_fxwXv0rRdqx10OLA",
+  authDomain: "pin-high-fcd1b.firebaseapp.com",
+  projectId: "pin-high-fcd1b",
+  storageBucket: "pin-high-fcd1b.firebasestorage.app",
+  messagingSenderId: "554970406618",
+  appId: "1:554970406618:web:569e0a8f2b92d5e8558fe3"
 });
 
 const messaging = firebase.messaging();
-
 messaging.onBackgroundMessage((payload) => {
-  const { title, body } = payload.notification;
-  self.registration.showNotification(title, {
-    body,
-    icon: '/icon-192.png',
-    badge: '/icon-192.png',
-    vibrate: [200, 100, 200],
+  self.registration.showNotification(payload.notification.title, {
+    body: payload.notification.body,
+    icon: '/icon-192.svg'
   });
 });
