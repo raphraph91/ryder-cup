@@ -1,9 +1,9 @@
 import { useState, useEffect, useRef } from "react";
 import { initializeApp } from "firebase/app";
-import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc } from "firebase/firestore";
+import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
-const VERSION = "8";
+const VERSION = "9";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLlzavBNImCRG0JacPZWdVIxezxKiqHcc",
@@ -21,6 +21,10 @@ try { messaging = getMessaging(firebaseApp); } catch(e) {}
 
 let lastPushKey = null;
 async function saveTournament(data) { await setDoc(doc(db,"tournaments","ryder2024"),data); }
+async function archiveTournament(data) {
+  const archived = { ...data, archivedAt: Date.now(), archivedAtLabel: new Date().toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit",year:"numeric"}) };
+  await addDoc(collection(db,"tournamentArchive"), archived);
+}
 async function registerFCMToken() {
   if(!messaging) return null;
   try { const t=await getToken(messaging,{vapidKey:VAPID_KEY}); if(t){await setDoc(doc(db,"fcm_tokens",t),{token:t,createdAt:Date.now()});return t;} } catch(e) {}
@@ -44,14 +48,11 @@ const COURSES = {
 };
 
 const GAME_MODES = {
-  scramble:{label:"Scramble",icon:"🔀",desc:"2v2 · Bestes Ergebnis",pairs:true},
-  singles:{label:"Singles",icon:"👤",desc:"1v1 · Individuell",pairs:false},
-  foursomes:{label:"Foursomes",icon:"🔄",desc:"2v2 · Abwechselnd",pairs:true},
-  fourball:{label:"Four-Ball",icon:"⛳",desc:"2v2 · Bester Ball",pairs:true},
+  scramble:{label:"Scramble",icon:"🔀",desc:"Bestes Team-Ergebnis",pairs:true},
+  singles:{label:"Singles",icon:"👤",desc:"Individuell",pairs:false},
+  foursomes:{label:"Foursomes",icon:"🔄",desc:"Abwechselnd schlagen",pairs:true},
+  fourball:{label:"Four-Ball",icon:"⛳",desc:"Bester Ball zählt",pairs:true},
 };
-
-function calcTeamHcp(h1,h2){const lo=Math.min(h1,h2),hi=Math.max(h1,h2);return Math.round((lo*0.35+hi*0.15)*10)/10;}
-function avgHcp(players){const v=players.filter(p=>p.hcp!=="");if(!v.length)return 0;return Math.round((v.reduce((s,p)=>s+parseFloat(p.hcp),0)/v.length)*10)/10;}
 
 function calcRoundStatus(scores,pars,s,e){
   let diff=0,played=0;
@@ -98,8 +99,8 @@ function calcStats(days,t1Name,t2Name){
     const course=COURSES[day.courseKey]||Object.values(COURSES)[0];
     day.matches.forEach(m=>{
       const isPairs=GAME_MODES[m.mode||"scramble"]?.pairs!==false;
-      const key1=isPairs?m.t1Pair.join(" & "):m.t1Pair[0]||"?";
-      const key2=isPairs?m.t2Pair.join(" & "):m.t2Pair[0]||"?";
+      const key1=isPairs?(m.t1Pair||[]).join(" & "):(m.t1Pair||[])[0]||"?";
+      const key2=isPairs?(m.t2Pair||[]).join(" & "):(m.t2Pair||[])[0]||"?";
       if(!pairStats[key1])pairStats[key1]={name:key1,team:"t1",pts:0,holesWon:0};
       if(!pairStats[key2])pairStats[key2]={name:key2,team:"t2",pts:0,holesWon:0};
       [0,1].forEach(r=>{
@@ -110,8 +111,7 @@ function calcStats(days,t1Name,t2Name){
     });
   });
   const allPairs=Object.values(pairStats);
-  const hotHoles=holeWins.t1.map((_,i)=>({hole:i+1,t1:holeWins.t1[i],t2:holeWins.t2[i],tie:holeWins.tie[i],total:holeWins.t1[i]+holeWins.t2[i]+holeWins.tie[i]})).filter(h=>h.total>0).sort((a,b)=>b.total-a.total);
-  return{t1Pairs:allPairs.filter(p=>p.team==="t1").sort((a,b)=>b.pts-a.pts),t2Pairs:allPairs.filter(p=>p.team==="t2").sort((a,b)=>b.pts-a.pts),t1TotalHoles,t2TotalHoles,holeWins,hotHoles,allPairs};
+  return{t1Pairs:allPairs.filter(p=>p.team==="t1").sort((a,b)=>b.pts-a.pts),t2Pairs:allPairs.filter(p=>p.team==="t2").sort((a,b)=>b.pts-a.pts),t1TotalHoles,t2TotalHoles,holeWins,allPairs};
 }
 
 const THEMES={
@@ -122,12 +122,26 @@ const fmt=v=>v%1===0?v:v.toFixed(1);
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 const IconReset=({size=16,color="currentColor"})=><svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>;
-const IconSettings=({size=18,color="currentColor"})=><svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>;
 const IconBack=({size=14,color="currentColor"})=><svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>;
 const IconChart=({size=16,color="currentColor"})=><svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>;
 const IconPlus=({size=16,color="currentColor"})=><svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>;
 const IconTrash=({size=16,color="currentColor"})=><svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>;
 const IconCheck=({size=16,color="currentColor"})=><svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>;
+const IconArchive=({size=16,color="currentColor"})=><svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>;
+
+// ── Theme Toggle (sun/moon) ───────────────────────────────────────────────────
+function ThemeToggle({theme,onToggle}){
+  const isDark=theme==="dark";
+  return(
+    <button onClick={onToggle}
+      style={{display:"flex",alignItems:"center",gap:"0",background:isDark?"#1A4D2E":"#E8F5E9",border:`1px solid ${isDark?"#2D6B40":"#A5D6A7"}`,borderRadius:"20px",padding:"3px",cursor:"pointer",width:"52px",height:"28px",position:"relative",transition:"all 0.3s",flexShrink:0}}
+      title={isDark?"Zu hellem Modus":"Zu dunklem Modus"}>
+      <span style={{position:"absolute",left:"5px",fontSize:"13px",transition:"opacity 0.2s",opacity:isDark?1:0}}>🌙</span>
+      <span style={{position:"absolute",right:"5px",fontSize:"13px",transition:"opacity 0.2s",opacity:isDark?0:1}}>☀️</span>
+      <div style={{width:"22px",height:"22px",borderRadius:"50%",background:isDark?"#C9A84C":"#2E7D32",position:"absolute",left:isDark?"3px":"27px",transition:"left 0.3s",boxShadow:"0 1px 4px rgba(0,0,0,0.3)"}}/>
+    </button>
+  );
+}
 
 // ── Player Avatar ─────────────────────────────────────────────────────────────
 function PlayerAvatar({name,size=36,color,photo}){
@@ -160,41 +174,47 @@ function WinBanner({event,onDone}){
   useEffect(()=>{if(!event)return;const t=setTimeout(onDone,4000);return()=>clearTimeout(t);},[event]);
   if(!event)return null;
   return(
-    <div style={{position:"fixed",top:"80px",left:"50%",transform:"translateX(-50%)",zIndex:501,textAlign:"center",pointerEvents:"none",width:"90%",maxWidth:"360px",animation:"slideDown 0.4s ease"}}>
-      <style>{`@keyframes slideDown{from{transform:translateX(-50%) translateY(-30px);opacity:0}to{transform:translateX(-50%) translateY(0);opacity:1}}`}</style>
+    <div style={{position:"fixed",top:"80px",left:"50%",transform:"translateX(-50%)",zIndex:501,textAlign:"center",pointerEvents:"none",width:"90%",maxWidth:"360px"}}>
       <div style={{background:event.winner?"linear-gradient(135deg,#C9A84C,#A07830)":"linear-gradient(135deg,#2D6B40,#1A4D2E)",borderRadius:"16px",padding:"18px 24px",boxShadow:"0 8px 32px rgba(0,0,0,0.5)",border:"2px solid rgba(255,255,255,0.2)"}}>
         <div style={{fontSize:"36px",marginBottom:"6px"}}>{event.winner?"🏆":"🤝"}</div>
-        <div style={{fontSize:"18px",fontWeight:"900",color:event.winner?"#0D2B1A":"#F2EDD7",fontFamily:"'Arial Black',sans-serif",letterSpacing:"1px"}}>{event.title}</div>
+        <div style={{fontSize:"18px",fontWeight:"900",color:event.winner?"#0D2B1A":"#F2EDD7",fontFamily:"'Arial Black',sans-serif"}}>{event.title}</div>
         <div style={{fontSize:"12px",color:event.winner?"rgba(0,0,0,0.6)":"#8BAF7C",marginTop:"4px"}}>{event.body}</div>
       </div>
     </div>
   );
 }
 
-// ── Shared header (no confirmation popup on back) ─────────────────────────────
-function Header({title,subtitle,onBack,backLabel,rightSlot,T}){
+// ── Header (sticky, no back-confirmation popup, theme toggle built in) ────────
+function Header({title,subtitle,onBack,backLabel,rightSlot,theme,onThemeToggle,T}){
   return(
-    <div style={{background:T.headerBg,borderBottom:`2px solid ${T.gold}`,padding:"14px 20px",textAlign:"center",position:"sticky",top:0,zIndex:10}}>
-      {onBack&&(
-        <button onClick={onBack} style={{position:"absolute",left:"14px",top:"50%",transform:"translateY(-50%)",background:"transparent",border:"1px solid rgba(255,255,255,0.2)",borderRadius:"6px",color:"rgba(255,255,255,0.6)",fontSize:"11px",padding:"5px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:"4px",fontFamily:"Arial,sans-serif"}}>
-          <IconBack size={12} color="rgba(255,255,255,0.6)"/>{backLabel||"Zurück"}
-        </button>
-      )}
-      <div style={{fontSize:"18px",fontWeight:"900",letterSpacing:"2px",color:T.gold,textTransform:"uppercase",fontFamily:"'Arial Black',sans-serif"}}>⛳ {title}</div>
-      {subtitle&&<div style={{fontSize:"10px",color:"rgba(255,255,255,0.5)",letterSpacing:"2px",marginTop:"3px"}}>{subtitle}</div>}
-      {rightSlot&&<div style={{position:"absolute",right:"14px",top:"50%",transform:"translateY(-50%)"}}>{rightSlot}</div>}
+    <div style={{background:T.headerBg,borderBottom:`2px solid ${T.gold}`,padding:"0 14px",height:"60px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:10}}>
+      <div style={{width:"80px",display:"flex",alignItems:"center"}}>
+        {onBack&&(
+          <button onClick={onBack} style={{background:"transparent",border:"1px solid rgba(255,255,255,0.2)",borderRadius:"6px",color:"rgba(255,255,255,0.7)",fontSize:"11px",padding:"5px 8px",cursor:"pointer",display:"flex",alignItems:"center",gap:"3px",whiteSpace:"nowrap"}}>
+            <IconBack size={11} color="rgba(255,255,255,0.7)"/>{backLabel||"Zurück"}
+          </button>
+        )}
+      </div>
+      <div style={{textAlign:"center",flex:1}}>
+        <div style={{fontSize:"17px",fontWeight:"900",letterSpacing:"2px",color:T.gold,textTransform:"uppercase",fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>⛳ {title}</div>
+        {subtitle&&<div style={{fontSize:"9px",color:"rgba(255,255,255,0.45)",letterSpacing:"2px",marginTop:"2px"}}>{subtitle}</div>}
+      </div>
+      <div style={{width:"80px",display:"flex",alignItems:"center",justifyContent:"flex-end",gap:"6px"}}>
+        {onThemeToggle&&<ThemeToggle theme={theme} onToggle={onThemeToggle}/>}
+        {rightSlot}
+      </div>
     </div>
   );
 }
 
-function ResetConfirm({title,message,onConfirm,onClose,T}){
+function ResetConfirm({title,message,onConfirm,onClose,T,confirmLabel="Ja, zurücksetzen",danger=true}){
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.75)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:300,padding:"20px"}} onClick={onClose}>
       <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"16px",padding:"24px 20px",maxWidth:"300px",width:"100%",textAlign:"center"}} onClick={e=>e.stopPropagation()}>
-        <div style={{width:"44px",height:"44px",borderRadius:"50%",background:"#E0525222",border:"1px solid #E0525255",display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 12px"}}><IconReset size={22} color="#E05252"/></div>
+        <div style={{width:"44px",height:"44px",borderRadius:"50%",background:danger?"#E0525222":"#C9A84C22",border:`1px solid ${danger?"#E0525255":"#C9A84C55"}`,display:"flex",alignItems:"center",justifyContent:"center",margin:"0 auto 12px"}}><IconReset size={22} color={danger?"#E05252":"#C9A84C"}/></div>
         <div style={{fontSize:"15px",fontWeight:"700",color:T.cream,marginBottom:"6px"}}>{title}</div>
         <div style={{fontSize:"12px",color:T.muted,marginBottom:"20px"}}>{message}</div>
-        <button style={{width:"100%",padding:"11px",background:"#E05252",border:"none",borderRadius:"8px",color:"white",fontSize:"13px",fontWeight:"700",cursor:"pointer",marginBottom:"8px"}} onClick={onConfirm}>Ja, zurücksetzen</button>
+        <button style={{width:"100%",padding:"11px",background:danger?"#E05252":"linear-gradient(135deg,#C9A84C,#A07830)",border:"none",borderRadius:"8px",color:"white",fontSize:"13px",fontWeight:"700",cursor:"pointer",marginBottom:"8px"}} onClick={onConfirm}>{confirmLabel}</button>
         <button style={{width:"100%",padding:"11px",background:"transparent",border:`1px solid ${T.border}`,borderRadius:"8px",color:T.muted,fontSize:"13px",cursor:"pointer"}} onClick={onClose}>Abbrechen</button>
       </div>
     </div>
@@ -207,23 +227,6 @@ function RoleBadge({role,T}){
   const label=isAdmin?"👑 Admin":isViewer?"👁 Zuschauer":`⛳ Match ${num}`;
   const color=isAdmin?T.gold:isViewer?T.muted:T.blue;
   return<div style={{display:"inline-flex",alignItems:"center",gap:"4px",background:color+"22",border:`1px solid ${color}55`,borderRadius:"20px",padding:"3px 10px",fontSize:"10px",color,letterSpacing:"1px"}}>{label}</div>;
-}
-
-function SettingsPanel({T,currentTheme,onThemeChange,onClose}){
-  return(
-    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.7)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:200}} onClick={onClose}>
-      <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"16px 16px 0 0",padding:"20px 18px 32px",width:"100%",maxWidth:"480px"}} onClick={e=>e.stopPropagation()}>
-        <div style={{width:"36px",height:"4px",background:T.border,borderRadius:"2px",margin:"0 auto 16px"}}/>
-        <div style={{fontSize:"14px",fontWeight:"700",color:T.cream,marginBottom:"16px",letterSpacing:"1px",textTransform:"uppercase"}}>Darstellung</div>
-        <div style={{display:"flex",gap:"10px",marginBottom:"20px"}}>
-          {[["dark","🌲 Dark"],["light","☀️ Hell"]].map(([k,l])=>(
-            <button key={k} onClick={()=>onThemeChange(k)} style={{flex:1,padding:"14px 10px",borderRadius:"10px",border:`2px solid ${currentTheme===k?T.gold:T.border}`,background:currentTheme===k?T.gold+"22":T.elevated,color:currentTheme===k?T.gold:T.muted,fontSize:"13px",cursor:"pointer",fontWeight:currentTheme===k?"700":"400"}}>{l}</button>
-          ))}
-        </div>
-        <button style={{width:"100%",padding:"12px",background:"transparent",border:`1px solid ${T.border}`,borderRadius:"8px",color:T.muted,fontSize:"13px",cursor:"pointer"}} onClick={onClose}>Schließen</button>
-      </div>
-    </div>
-  );
 }
 
 function PushBanner({onDismiss,T}){
@@ -254,13 +257,14 @@ function Toast({message,onDismiss}){
 }
 
 // ── Login ─────────────────────────────────────────────────────────────────────
-function Login({onLogin}){
+function Login({onLogin,theme,onThemeToggle}){
   const [code,setCode]=useState(""),[error,setError]=useState("");
   const check=()=>{const r=resolveRole(code);if(r)onLogin(r);else setError("Ungültiger Code");};
-  const T=THEMES.dark;
+  const T=THEMES[theme];
   return(
     <div style={{minHeight:"100vh",background:T.bg,color:T.cream,fontFamily:"Georgia,serif",display:"flex",alignItems:"center",justifyContent:"center",padding:"20px"}}>
       <div style={{width:"100%",maxWidth:"320px",textAlign:"center"}}>
+        <div style={{position:"fixed",top:"16px",right:"16px"}}><ThemeToggle theme={theme} onToggle={onThemeToggle}/></div>
         <div style={{fontSize:"56px",marginBottom:"10px"}}>⛳</div>
         <div style={{fontSize:"26px",fontWeight:"900",color:T.gold,letterSpacing:"4px",textTransform:"uppercase",fontFamily:"'Arial Black',sans-serif"}}>Ryder Cup</div>
         <div style={{fontSize:"11px",color:T.muted,letterSpacing:"2px",marginBottom:"4px"}}>Friends Edition</div>
@@ -287,7 +291,7 @@ function Login({onLogin}){
 // ══════════════════════════════════════════════════════════════════════════════
 // PLAYER MANAGER
 // ══════════════════════════════════════════════════════════════════════════════
-function PlayerManager({onBack,T}){
+function PlayerManager({onBack,T,theme,onThemeToggle}){
   const [players,setPlayers]=useState([]);
   const [loading,setLoading]=useState(true);
   const [editingId,setEditingId]=useState(null);
@@ -299,14 +303,12 @@ function PlayerManager({onBack,T}){
   useEffect(()=>{getDocs(collection(db,"savedPlayers")).then(snap=>{setPlayers(snap.docs.map(d=>({id:d.id,...d.data()})));setLoading(false);}).catch(()=>setLoading(false));},[]);
 
   const handlePhotoChange=e=>{const file=e.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=ev=>{setCropSrc(ev.target.result);setCropScale(1);};reader.readAsDataURL(file);};
-
   const cropAndSave=()=>{
     const size=200;const canvas=document.createElement("canvas");canvas.width=size;canvas.height=size;
     const ctx=canvas.getContext("2d");const img=new Image();
     img.onload=()=>{const s=Math.min(img.width,img.height)*cropScale;const sx=(img.width-s)/2;const sy=(img.height-s)/2;ctx.beginPath();ctx.arc(size/2,size/2,size/2,0,Math.PI*2);ctx.clip();ctx.drawImage(img,sx,sy,s,s,0,0,size,size);setPhoto(canvas.toDataURL("image/jpeg",0.8));setCropSrc(null);};
     img.src=cropSrc;
   };
-
   const startEdit=p=>{setEditingId(p.id);setFn(p.fn||"");setLn(p.ln||"");setHcp(p.hcp||"");setPhoto(p.photo||null);setShowForm(true);};
   const resetForm=()=>{setEditingId(null);setFn("");setLn("");setHcp("");setPhoto(null);setShowForm(false);};
   const savePlayer=async()=>{
@@ -321,7 +323,7 @@ function PlayerManager({onBack,T}){
 
   return(
     <div style={{minHeight:"100vh",background:T.bg,color:T.cream,fontFamily:"Georgia,serif"}}>
-      <Header title="Spieler" subtitle="VERWALTUNG" onBack={onBack} backLabel="Menü" T={T}/>
+      <Header title="Spieler" subtitle="VERWALTUNG" onBack={onBack} backLabel="Menü" theme={theme} onThemeToggle={onThemeToggle} T={T}/>
       <div style={{padding:"14px",maxWidth:"480px",margin:"0 auto"}}>
         {!showForm?(
           <>
@@ -353,13 +355,10 @@ function PlayerManager({onBack,T}){
                 </label>
               </div>
             </div>
-            <div style={{fontSize:"10px",color:T.faint,textAlign:"center",marginBottom:"16px"}}>Tippe das Kamera-Icon für Foto aus der Mediathek</div>
-            <div style={{fontSize:"10px",color:T.muted,letterSpacing:"1px",marginBottom:"4px"}}>VORNAME *</div>
-            <input style={inp} placeholder="Vorname" value={fn} onChange={e=>setFn(e.target.value)}/>
-            <div style={{fontSize:"10px",color:T.muted,letterSpacing:"1px",marginBottom:"4px"}}>NACHNAME *</div>
-            <input style={inp} placeholder="Nachname" value={ln} onChange={e=>setLn(e.target.value)}/>
-            <div style={{fontSize:"10px",color:T.muted,letterSpacing:"1px",marginBottom:"4px"}}>HANDICAP</div>
-            <input style={{...inp,marginBottom:"20px"}} inputMode="decimal" placeholder="z.B. 8.4" value={hcp} onChange={e=>setHcp(e.target.value)}/>
+            <div style={{fontSize:"10px",color:T.faint,textAlign:"center",marginBottom:"16px"}}>Tippe das Kamera-Icon für Foto</div>
+            {[["VORNAME *",fn,setFn,"Vorname"],["NACHNAME *",ln,setLn,"Nachname"],["HANDICAP",hcp,setHcp,"z.B. 8.4"]].map(([lbl,val,setter,ph])=>(
+              <div key={lbl}><div style={{fontSize:"10px",color:T.muted,letterSpacing:"1px",marginBottom:"4px"}}>{lbl}</div><input style={inp} placeholder={ph} value={val} onChange={e=>setter(e.target.value)}/></div>
+            ))}
             <button onClick={savePlayer} disabled={!fn.trim()||!ln.trim()||saving}
               style={{width:"100%",padding:"13px",background:(!fn.trim()||!ln.trim())?T.elevated:`linear-gradient(135deg,${T.gold},#A07830)`,border:"none",borderRadius:"8px",color:(!fn.trim()||!ln.trim())?T.muted:T.isDark?"#0D2B1A":"white",fontSize:"14px",fontWeight:"900",letterSpacing:"2px",textTransform:"uppercase",cursor:"pointer",marginBottom:"8px",opacity:(!fn.trim()||!ln.trim())?0.5:1}}>
               {saving?"Speichere...":"Speichern"}
@@ -371,9 +370,7 @@ function PlayerManager({onBack,T}){
       {cropSrc&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",zIndex:400,padding:"20px"}}>
           <div style={{fontSize:"14px",fontWeight:"700",color:T.gold,marginBottom:"16px"}}>Foto zuschneiden</div>
-          <div style={{position:"relative",width:"200px",height:"200px",borderRadius:"50%",overflow:"hidden",border:`3px solid ${T.gold}`,marginBottom:"16px"}}>
-            <img src={cropSrc} style={{width:"100%",height:"100%",objectFit:"cover",transform:`scale(${cropScale})`,transformOrigin:"center"}} alt="crop"/>
-          </div>
+          <div style={{position:"relative",width:"200px",height:"200px",borderRadius:"50%",overflow:"hidden",border:`3px solid ${T.gold}`,marginBottom:"16px"}}><img src={cropSrc} style={{width:"100%",height:"100%",objectFit:"cover",transform:`scale(${cropScale})`,transformOrigin:"center"}} alt="crop"/></div>
           <div style={{width:"100%",maxWidth:"280px",marginBottom:"16px"}}><div style={{fontSize:"10px",color:T.muted,marginBottom:"4px"}}>Zoom</div><input type="range" min="1" max="3" step="0.05" value={cropScale} onChange={e=>setCropScale(Number(e.target.value))} style={{width:"100%",accentColor:T.gold}}/></div>
           <div style={{display:"flex",gap:"10px",width:"100%",maxWidth:"280px"}}>
             <button onClick={cropAndSave} style={{flex:1,padding:"12px",background:`linear-gradient(135deg,${T.gold},#A07830)`,border:"none",borderRadius:"8px",color:T.isDark?"#0D2B1A":"white",fontSize:"13px",fontWeight:"900",cursor:"pointer"}}>Übernehmen ✓</button>
@@ -397,27 +394,26 @@ function PlayerManager({onBack,T}){
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// TOURNAMENT PLANNING
+// TOURNAMENT PLANNING  – supports 1v1 and 2v2 per match format
 // ══════════════════════════════════════════════════════════════════════════════
-function TournamentPlanning({onStart,onBack,T}){
+function TournamentPlanning({onStart,onBack,T,theme,onThemeToggle}){
   const [tab,setTab]=useState(0);
   const [saving,setSaving]=useState(false);
 
-  // Tab 0
+  // Tab 0 – Settings
   const [t1Name,setT1Name]=useState("Team Europa");
   const [t2Name,setT2Name]=useState("Team USA");
   const [numDays,setNumDays]=useState(2);
   const [matchesPerDay,setMatchesPerDay]=useState(4);
+  const [matchFormat,setMatchFormat]=useState("1v1"); // "1v1" | "2v2"
   const [daySettings,setDaySettings]=useState([{courseKey:"riedhof",mode:"scramble"},{courseKey:"bergkramerhof",mode:"scramble"}]);
 
-  const updateDays=(nd)=>{
-    setNumDays(nd);
-    setDaySettings(prev=>{const next=[];for(let i=0;i<nd;i++)next.push(prev[i]||{courseKey:"riedhof",mode:"scramble"});return next;});
-  };
+  const updateDays=nd=>{setNumDays(nd);setDaySettings(prev=>{const next=[];for(let i=0;i<nd;i++)next.push(prev[i]||{courseKey:"riedhof",mode:"scramble"});return next;});};
   const setDayCourse=(i,key)=>setDaySettings(prev=>prev.map((d,idx)=>idx===i?{...d,courseKey:key}:d));
   const setDayMode=(i,mode)=>setDaySettings(prev=>prev.map((d,idx)=>idx===i?{...d,mode}:d));
+  const playersPerSlot=matchFormat==="2v2"?2:1;
 
-  // Tab 1
+  // Tab 1 – Players
   const [allSavedPlayers,setAllSavedPlayers]=useState([]);
   const [playersLoaded,setPlayersLoaded]=useState(false);
   const [selectedIds,setSelectedIds]=useState(new Set());
@@ -426,61 +422,68 @@ function TournamentPlanning({onStart,onBack,T}){
   const [showAddPlayer,setShowAddPlayer]=useState(false);
   const [newFn,setNewFn]=useState(""); const [newLn,setNewLn]=useState(""); const [newHcp,setNewHcp]=useState(""); const [addingPlayer,setAddingPlayer]=useState(false);
 
-  useEffect(()=>{
-    if(!playersLoaded){getDocs(collection(db,"savedPlayers")).then(snap=>{setAllSavedPlayers(snap.docs.map(d=>({id:d.id,...d.data()})));setPlayersLoaded(true);}).catch(()=>setPlayersLoaded(true));}
-  },[playersLoaded]);
+  useEffect(()=>{if(!playersLoaded){getDocs(collection(db,"savedPlayers")).then(snap=>{setAllSavedPlayers(snap.docs.map(d=>({id:d.id,...d.data()})));setPlayersLoaded(true);}).catch(()=>setPlayersLoaded(true));}},[playersLoaded]);
 
-  const toggleSelect=id=>{
-    setSelectedIds(prev=>{const next=new Set(prev);if(next.has(id)){next.delete(id);setTeam1Ids(t=>{const n=new Set(t);n.delete(id);return n;});setTeam2Ids(t=>{const n=new Set(t);n.delete(id);return n;});}else next.add(id);return next;});
-  };
-  const assignTeam=(id,team)=>{
-    if(team==="t1"){setTeam1Ids(p=>{const n=new Set(p);n.add(id);return n;});setTeam2Ids(p=>{const n=new Set(p);n.delete(id);return n;});}
-    else{setTeam2Ids(p=>{const n=new Set(p);n.add(id);return n;});setTeam1Ids(p=>{const n=new Set(p);n.delete(id);return n;});}
-  };
+  const toggleSelect=id=>{setSelectedIds(prev=>{const next=new Set(prev);if(next.has(id)){next.delete(id);setTeam1Ids(t=>{const n=new Set(t);n.delete(id);return n;});setTeam2Ids(t=>{const n=new Set(t);n.delete(id);return n;});}else next.add(id);return next;});};
+  const assignTeam=(id,team)=>{if(team==="t1"){setTeam1Ids(p=>{const n=new Set(p);n.add(id);return n;});setTeam2Ids(p=>{const n=new Set(p);n.delete(id);return n;});}else{setTeam2Ids(p=>{const n=new Set(p);n.add(id);return n;});setTeam1Ids(p=>{const n=new Set(p);n.delete(id);return n;});}};
   const addNewPlayer=async()=>{
     if(!newFn.trim()||!newLn.trim())return;setAddingPlayer(true);
     const id="p"+Date.now();const data={fn:newFn.trim(),ln:newLn.trim(),hcp:newHcp||"",photo:null};
     await setDoc(doc(db,"savedPlayers",id),data).catch(()=>{});
-    setAllSavedPlayers(prev=>[...prev,{id,...data}]);
-    setSelectedIds(prev=>new Set([...prev,id]));
+    setAllSavedPlayers(prev=>[...prev,{id,...data}]);setSelectedIds(prev=>new Set([...prev,id]));
     setNewFn("");setNewLn("");setNewHcp("");setShowAddPlayer(false);setAddingPlayer(false);
   };
-
   const selectedPlayers=allSavedPlayers.filter(p=>selectedIds.has(p.id));
   const t1Players=selectedPlayers.filter(p=>team1Ids.has(p.id));
   const t2Players=selectedPlayers.filter(p=>team2Ids.has(p.id));
   const unassigned=selectedPlayers.filter(p=>!team1Ids.has(p.id)&&!team2Ids.has(p.id));
 
-  // Tab 2
-  const [matchAssign,setMatchAssign]=useState(()=>Array.from({length:2},()=>Array.from({length:4},()=>({t1Player:null,t2Player:null}))));
+  // Tab 2 – Match assignment
+  // matchAssign[dayIdx][matchIdx] = { t1Players: [id,...], t2Players: [id,...] }
+  const makeEmptyMatch=()=>({t1Players:[],t2Players:[]});
+  const [matchAssign,setMatchAssign]=useState(()=>Array.from({length:2},()=>Array.from({length:4},makeEmptyMatch)));
   const [activeDay2,setActiveDay2]=useState(0);
+  // pickingSlot: { dayIdx, matchIdx, team, slotIdx }  slotIdx = 0|1 for 2v2
   const [pickingSlot,setPickingSlot]=useState(null);
 
-  useEffect(()=>{
-    setMatchAssign(prev=>Array.from({length:numDays},(_,di)=>Array.from({length:matchesPerDay},(_,mi)=>prev[di]?.[mi]||{t1Player:null,t2Player:null})));
-  },[numDays,matchesPerDay]);
+  useEffect(()=>{setMatchAssign(prev=>Array.from({length:numDays},(_,di)=>Array.from({length:matchesPerDay},(_,mi)=>prev[di]?.[mi]||makeEmptyMatch())));},[numDays,matchesPerDay]);
 
-  const usedOnDay=dayIdx=>{const used=new Set();(matchAssign[dayIdx]||[]).forEach(m=>{if(m.t1Player)used.add(m.t1Player);if(m.t2Player)used.add(m.t2Player);});return used;};
+  const usedOnDay=dayIdx=>{const used=new Set();(matchAssign[dayIdx]||[]).forEach(m=>{m.t1Players.forEach(id=>used.add(id));m.t2Players.forEach(id=>used.add(id));});return used;};
 
   const assignPlayerToSlot=playerId=>{
     if(!pickingSlot)return;
-    const{dayIdx,matchIdx,team}=pickingSlot;
+    const{dayIdx,matchIdx,team,slotIdx}=pickingSlot;
     setMatchAssign(prev=>{
-      const next=prev.map(d=>d.map(m=>({...m})));
-      next[dayIdx]=next[dayIdx].map((m,mi)=>{if(mi===matchIdx)return m;return{t1Player:m.t1Player===playerId?null:m.t1Player,t2Player:m.t2Player===playerId?null:m.t2Player};});
-      if(team==="t1")next[dayIdx][matchIdx].t1Player=playerId;else next[dayIdx][matchIdx].t2Player=playerId;
+      const next=prev.map(d=>d.map(m=>({t1Players:[...m.t1Players],t2Players:[...m.t2Players]})));
+      // remove from other slots same day
+      next[dayIdx]=next[dayIdx].map((m,mi)=>{
+        if(mi===matchIdx)return m;
+        return{t1Players:m.t1Players.filter(id=>id!==playerId),t2Players:m.t2Players.filter(id=>id!==playerId)};
+      });
+      const slot=next[dayIdx][matchIdx];
+      const arr=team==="t1"?slot.t1Players:slot.t2Players;
+      arr[slotIdx]=playerId;
       return next;
     });
     setPickingSlot(null);
   };
 
-  const clearSlot=(dayIdx,matchIdx,team)=>{
-    setMatchAssign(prev=>{const next=prev.map(d=>d.map(m=>({...m})));if(team==="t1")next[dayIdx][matchIdx].t1Player=null;else next[dayIdx][matchIdx].t2Player=null;return next;});
+  const clearSlotPlayer=(dayIdx,matchIdx,team,slotIdx)=>{
+    setMatchAssign(prev=>{
+      const next=prev.map(d=>d.map(m=>({t1Players:[...m.t1Players],t2Players:[...m.t2Players]})));
+      const arr=team==="t1"?next[dayIdx][matchIdx].t1Players:next[dayIdx][matchIdx].t2Players;
+      arr[slotIdx]=undefined;
+      return next;
+    });
   };
 
-  const allMatchesFilled=matchAssign.slice(0,numDays).every(day=>day.every(m=>m.t1Player&&m.t2Player));
+  const matchFilled=m=>{
+    for(let i=0;i<playersPerSlot;i++){if(!m.t1Players[i]||!m.t2Players[i])return false;}
+    return true;
+  };
+  const allMatchesFilled=matchAssign.slice(0,numDays).every(day=>day.every(matchFilled));
   const tab0ok=t1Name.trim()&&t2Name.trim();
-  const tab1ok=t1Players.length>=1&&t2Players.length>=1&&unassigned.length===0&&selectedIds.size>=2;
+  const tab1ok=t1Players.length>=playersPerSlot&&t2Players.length>=playersPerSlot&&unassigned.length===0&&selectedIds.size>=2;
 
   const handleStart=async()=>{
     if(!allMatchesFilled)return;setSaving(true);
@@ -488,17 +491,23 @@ function TournamentPlanning({onStart,onBack,T}){
     const days=daySettings.slice(0,numDays).map((ds,di)=>{
       const mode=ds.mode;
       const matches=matchAssign[di].map((ma,mi)=>{
-        const p1=playerMap[ma.t1Player];const p2=playerMap[ma.t2Player];
-        return{id:(di*100)+(mi+1),name:`Match ${mi+1}`,pin:`MATCH${(di*matchesPerDay)+(mi+1)}`,mode,
-          t1Pair:[p1?`${p1.fn} ${p1.ln}`:"?"],t2Pair:[p2?`${p2.fn} ${p2.ln}`:"?"],
-          t1PlayerIds:[ma.t1Player].filter(Boolean),t2PlayerIds:[ma.t2Player].filter(Boolean),
-          t1Photos:{[ma.t1Player]:p1?.photo||null},t2Photos:{[ma.t2Player]:p2?.photo||null},
-          teamHcp1:p1?parseFloat(p1.hcp||0):null,teamHcp2:p2?parseFloat(p2.hcp||0):null,
-          scores:emptyScores()};
+        const p1a=playerMap[ma.t1Players[0]];const p1b=playerMap[ma.t1Players[1]];
+        const p2a=playerMap[ma.t2Players[0]];const p2b=playerMap[ma.t2Players[1]];
+        const t1Pair=[p1a?`${p1a.fn} ${p1a.ln}`:"?",p1b?`${p1b.fn} ${p1b.ln}`:null].filter(Boolean);
+        const t2Pair=[p2a?`${p2a.fn} ${p2a.ln}`:"?",p2b?`${p2b.fn} ${p2b.ln}`:null].filter(Boolean);
+        const t1Photos={};ma.t1Players.forEach(id=>{if(id)t1Photos[id]=playerMap[id]?.photo||null;});
+        const t2Photos={};ma.t2Players.forEach(id=>{if(id)t2Photos[id]=playerMap[id]?.photo||null;});
+        return{
+          id:(di*100)+(mi+1),name:`Match ${mi+1}`,pin:`MATCH${(di*matchesPerDay)+(mi+1)}`,mode,matchFormat,
+          t1Pair,t2Pair,t1PlayerIds:ma.t1Players.filter(Boolean),t2PlayerIds:ma.t2Players.filter(Boolean),
+          t1Photos,t2Photos,
+          teamHcp1:p1a?parseFloat(p1a.hcp||0):null,teamHcp2:p2a?parseFloat(p2a.hcp||0):null,
+          scores:emptyScores()
+        };
       });
       return{id:di,label:`Tag ${di+1} – ${COURSES[ds.courseKey]?.shortName||ds.courseKey}`,courseKey:ds.courseKey,mode,matches};
     });
-    const config={t1Name,t2Name,t1Players:t1Players.map(p=>({id:p.id,fn:p.fn,ln:p.ln,hcp:p.hcp,photo:p.photo||null})),t2Players:t2Players.map(p=>({id:p.id,fn:p.fn,ln:p.ln,hcp:p.hcp,photo:p.photo||null})),days,phase:"game"};
+    const config={t1Name,t2Name,matchFormat,t1Players:t1Players.map(p=>({id:p.id,fn:p.fn,ln:p.ln,hcp:p.hcp,photo:p.photo||null})),t2Players:t2Players.map(p=>({id:p.id,fn:p.fn,ln:p.ln,hcp:p.hcp,photo:p.photo||null})),days,phase:"game",startedAt:Date.now()};
     await saveTournament(config);setSaving(false);onStart(config);
   };
 
@@ -506,17 +515,17 @@ function TournamentPlanning({onStart,onBack,T}){
 
   return(
     <div style={{minHeight:"100vh",background:T.bg,color:T.cream,fontFamily:"Georgia,serif"}}>
-      <Header title="Turnierplanung" onBack={onBack} backLabel="Menü" T={T}/>
-      <div style={{display:"flex",borderBottom:`2px solid ${T.border}`,position:"sticky",top:"70px",zIndex:9,background:T.bg}}>
+      <Header title="Turnierplanung" onBack={onBack} backLabel="Menü" theme={theme} onThemeToggle={onThemeToggle} T={T}/>
+      <div style={{display:"flex",borderBottom:`2px solid ${T.border}`,position:"sticky",top:"60px",zIndex:9,background:T.bg}}>
         {tabLabels.map((l,i)=>(
-          <button key={i} onClick={()=>setTab(i)} style={{flex:1,padding:"12px 4px",background:"transparent",border:"none",borderBottom:`3px solid ${tab===i?T.gold:"transparent"}`,color:tab===i?T.gold:T.muted,fontSize:"11px",fontWeight:tab===i?"700":"400",cursor:"pointer",letterSpacing:"0.5px",textTransform:"uppercase",transition:"all 0.2s",marginBottom:"-2px"}}>
+          <button key={i} onClick={()=>setTab(i)} style={{flex:1,padding:"11px 4px",background:"transparent",border:"none",borderBottom:`3px solid ${tab===i?T.gold:"transparent"}`,color:tab===i?T.gold:T.muted,fontSize:"11px",fontWeight:tab===i?"700":"400",cursor:"pointer",textTransform:"uppercase",marginBottom:"-2px"}}>
             {l}
           </button>
         ))}
       </div>
-
       <div style={{padding:"14px",maxWidth:"480px",margin:"0 auto",paddingBottom:"100px"}}>
 
+        {/* ── TAB 0 ── */}
         {tab===0&&(
           <>
             <div style={{background:T.cardBg,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"14px"}}>
@@ -526,21 +535,27 @@ function TournamentPlanning({onStart,onBack,T}){
               <div style={{fontSize:"10px",color:T.red,letterSpacing:"1px",marginBottom:"4px"}}>🔴 TEAM 2</div>
               <input style={{width:"100%",padding:"10px 12px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:"8px",color:T.cream,fontSize:"14px",boxSizing:"border-box",outline:"none"}} value={t2Name} onChange={e=>setT2Name(e.target.value)}/>
             </div>
+
+            {/* Match format */}
             <div style={{background:T.cardBg,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"14px"}}>
-              <div style={{fontSize:"10px",color:T.muted,letterSpacing:"2px",marginBottom:"10px"}}>ANZAHL SPIELTAGE</div>
+              <div style={{fontSize:"10px",color:T.muted,letterSpacing:"2px",marginBottom:"10px"}}>SPIELFORMAT</div>
               <div style={{display:"flex",gap:"8px"}}>
-                {[1,2,3,4].map(n=>(
-                  <button key={n} onClick={()=>updateDays(n)} style={{flex:1,padding:"14px",borderRadius:"10px",border:`2px solid ${numDays===n?T.gold:T.border}`,background:numDays===n?T.gold+"22":T.elevated,color:numDays===n?T.gold:T.muted,fontSize:"20px",fontWeight:"900",cursor:"pointer"}}>{n}</button>
+                {[["1v1","👤 1 vs 1","Je 1 Spieler pro Team"],["2v2","👥 2 vs 2","Je 2 Spieler pro Team"]].map(([k,lbl,desc])=>(
+                  <button key={k} onClick={()=>setMatchFormat(k)} style={{flex:1,padding:"12px",borderRadius:"10px",border:`2px solid ${matchFormat===k?T.gold:T.border}`,background:matchFormat===k?T.gold+"22":T.elevated,color:matchFormat===k?T.gold:T.muted,cursor:"pointer",textAlign:"center"}}>
+                    <div style={{fontSize:"16px",marginBottom:"4px"}}>{lbl}</div>
+                    <div style={{fontSize:"10px"}}>{desc}</div>
+                  </button>
                 ))}
               </div>
             </div>
+
+            <div style={{background:T.cardBg,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"14px"}}>
+              <div style={{fontSize:"10px",color:T.muted,letterSpacing:"2px",marginBottom:"10px"}}>ANZAHL SPIELTAGE</div>
+              <div style={{display:"flex",gap:"8px"}}>{[1,2,3,4].map(n=><button key={n} onClick={()=>updateDays(n)} style={{flex:1,padding:"14px",borderRadius:"10px",border:`2px solid ${numDays===n?T.gold:T.border}`,background:numDays===n?T.gold+"22":T.elevated,color:numDays===n?T.gold:T.muted,fontSize:"20px",fontWeight:"900",cursor:"pointer"}}>{n}</button>)}</div>
+            </div>
             <div style={{background:T.cardBg,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"14px"}}>
               <div style={{fontSize:"10px",color:T.muted,letterSpacing:"2px",marginBottom:"10px"}}>MATCHES PRO TAG</div>
-              <div style={{display:"flex",gap:"8px"}}>
-                {[2,3,4,5].map(n=>(
-                  <button key={n} onClick={()=>setMatchesPerDay(n)} style={{flex:1,padding:"14px",borderRadius:"10px",border:`2px solid ${matchesPerDay===n?T.gold:T.border}`,background:matchesPerDay===n?T.gold+"22":T.elevated,color:matchesPerDay===n?T.gold:T.muted,fontSize:"20px",fontWeight:"900",cursor:"pointer"}}>{n}</button>
-                ))}
-              </div>
+              <div style={{display:"flex",gap:"8px"}}>{[2,3,4,5].map(n=><button key={n} onClick={()=>setMatchesPerDay(n)} style={{flex:1,padding:"14px",borderRadius:"10px",border:`2px solid ${matchesPerDay===n?T.gold:T.border}`,background:matchesPerDay===n?T.gold+"22":T.elevated,color:matchesPerDay===n?T.gold:T.muted,fontSize:"20px",fontWeight:"900",cursor:"pointer"}}>{n}</button>)}</div>
               <div style={{fontSize:"11px",color:T.faint,marginTop:"8px",textAlign:"center"}}>{numDays} Tage × {matchesPerDay} Matches × 2 Runden = <span style={{color:T.gold,fontWeight:"700"}}>{numDays*matchesPerDay*2} Punkte</span></div>
             </div>
             {Array.from({length:numDays},(_,di)=>(
@@ -549,8 +564,7 @@ function TournamentPlanning({onStart,onBack,T}){
                 <div style={{fontSize:"10px",color:T.muted,letterSpacing:"1px",marginBottom:"6px"}}>GOLFPLATZ</div>
                 {Object.values(COURSES).map(c=>(
                   <button key={c.id} onClick={()=>setDayCourse(di,c.id)} style={{display:"flex",alignItems:"center",gap:"10px",padding:"10px 12px",background:daySettings[di]?.courseKey===c.id?T.gold+"18":T.isDark?"#0A2014":T.elevated,border:`1px solid ${daySettings[di]?.courseKey===c.id?T.gold:T.border}`,borderRadius:"8px",marginBottom:"6px",cursor:"pointer",width:"100%",textAlign:"left"}}>
-                    <span style={{fontSize:"18px"}}>⛳</span>
-                    <div style={{flex:1}}><div style={{fontSize:"12px",fontWeight:"700",color:T.cream}}>{c.name}</div><div style={{fontSize:"10px",color:T.faint}}>{c.location} · Par {c.par.reduce((a,b)=>a+b,0)}</div></div>
+                    <span>⛳</span><div style={{flex:1}}><div style={{fontSize:"12px",fontWeight:"700",color:T.cream}}>{c.name}</div><div style={{fontSize:"10px",color:T.faint}}>{c.location} · Par {c.par.reduce((a,b)=>a+b,0)}</div></div>
                     {daySettings[di]?.courseKey===c.id&&<IconCheck size={16} color={T.gold}/>}
                   </button>
                 ))}
@@ -570,31 +584,28 @@ function TournamentPlanning({onStart,onBack,T}){
           </>
         )}
 
+        {/* ── TAB 1 ── */}
         {tab===1&&(
           <>
             <div style={{background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"14px",fontSize:"11px",color:T.muted}}>
-              ✅ Haken setzen = Spieler dabei · dann 🔵 oder 🔴 tippen
+              ✅ Haken = dabei · dann 🔵 oder 🔴 tippen · Format: <span style={{color:T.gold,fontWeight:"700"}}>{matchFormat}</span>
             </div>
             {!playersLoaded&&<div style={{textAlign:"center",padding:"20px",color:T.muted}}>Lade...</div>}
             {playersLoaded&&allSavedPlayers.map(p=>{
               const sel=selectedIds.has(p.id);const inT1=team1Ids.has(p.id);const inT2=team2Ids.has(p.id);
               return(
                 <div key={p.id} style={{background:T.cardBg,border:`1px solid ${sel?(inT1?T.blue:inT2?T.red:T.gold):T.border}`,borderRadius:"10px",padding:"10px 12px",marginBottom:"8px",display:"flex",alignItems:"center",gap:"10px"}}>
-                  <div onClick={()=>toggleSelect(p.id)} style={{width:"26px",height:"26px",borderRadius:"6px",border:`2px solid ${sel?T.gold:T.border}`,background:sel?T.gold+"22":"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0}}>
-                    {sel&&<IconCheck size={14} color={T.gold}/>}
-                  </div>
+                  <div onClick={()=>toggleSelect(p.id)} style={{width:"26px",height:"26px",borderRadius:"6px",border:`2px solid ${sel?T.gold:T.border}`,background:sel?T.gold+"22":"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0}}>{sel&&<IconCheck size={14} color={T.gold}/>}</div>
                   <PlayerAvatar name={(p.fn||"")+" "+(p.ln||"")} size={38} color={inT1?T.blue:inT2?T.red:T.muted} photo={p.photo}/>
                   <div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"600",color:T.cream}}>{p.fn} {p.ln}</div><div style={{fontSize:"10px",color:T.faint}}>{p.hcp?`HCP ${p.hcp}`:"—"}</div></div>
-                  {sel&&(
-                    <div style={{display:"flex",gap:"4px"}}>
-                      <button onClick={()=>assignTeam(p.id,"t1")} style={{padding:"6px 12px",borderRadius:"6px",border:`1px solid ${inT1?T.blue:T.border}`,background:inT1?T.blue+"22":"transparent",color:inT1?T.blue:T.muted,fontSize:"12px",fontWeight:inT1?"700":"400",cursor:"pointer"}}>🔵</button>
-                      <button onClick={()=>assignTeam(p.id,"t2")} style={{padding:"6px 12px",borderRadius:"6px",border:`1px solid ${inT2?T.red:T.border}`,background:inT2?T.red+"22":"transparent",color:inT2?T.red:T.muted,fontSize:"12px",fontWeight:inT2?"700":"400",cursor:"pointer"}}>🔴</button>
-                    </div>
-                  )}
+                  {sel&&(<div style={{display:"flex",gap:"4px"}}>
+                    <button onClick={()=>assignTeam(p.id,"t1")} style={{padding:"6px 12px",borderRadius:"6px",border:`1px solid ${inT1?T.blue:T.border}`,background:inT1?T.blue+"22":"transparent",color:inT1?T.blue:T.muted,fontSize:"12px",fontWeight:inT1?"700":"400",cursor:"pointer"}}>🔵</button>
+                    <button onClick={()=>assignTeam(p.id,"t2")} style={{padding:"6px 12px",borderRadius:"6px",border:`1px solid ${inT2?T.red:T.border}`,background:inT2?T.red+"22":"transparent",color:inT2?T.red:T.muted,fontSize:"12px",fontWeight:inT2?"700":"400",cursor:"pointer"}}>🔴</button>
+                  </div>)}
                 </div>
               );
             })}
-            {playersLoaded&&allSavedPlayers.length===0&&<div style={{textAlign:"center",padding:"30px",color:T.muted}}>Noch keine Spieler gespeichert. Füge hier welche hinzu oder nutze zuerst die Spielerverwaltung.</div>}
+            {playersLoaded&&allSavedPlayers.length===0&&<div style={{textAlign:"center",padding:"30px",color:T.muted}}>Noch keine Spieler. Bitte zuerst in der Spielerverwaltung anlegen.</div>}
             {!showAddPlayer?(
               <button onClick={()=>setShowAddPlayer(true)} style={{width:"100%",padding:"11px",background:"transparent",border:`1px dashed ${T.gold}55`,borderRadius:"8px",color:T.gold,fontSize:"12px",cursor:"pointer",marginBottom:"14px",display:"flex",alignItems:"center",justifyContent:"center",gap:"6px"}}>
                 <IconPlus size={13} color={T.gold}/> Neuen Spieler hinzufügen
@@ -603,28 +614,23 @@ function TournamentPlanning({onStart,onBack,T}){
               <div style={{background:T.cardBg,border:`1px solid ${T.gold}55`,borderRadius:"10px",padding:"14px",marginBottom:"14px"}}>
                 <div style={{fontSize:"12px",fontWeight:"700",color:T.gold,marginBottom:"10px"}}>Neuer Spieler</div>
                 {[["Vorname *",newFn,setNewFn],["Nachname *",newLn,setNewLn],["HCP",newHcp,setNewHcp]].map(([lbl,val,setter])=>(
-                  <input key={lbl} placeholder={lbl} value={val} onChange={e=>setter(e.target.value)}
-                    style={{width:"100%",padding:"9px 12px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:"6px",color:T.cream,fontSize:"13px",boxSizing:"border-box",outline:"none",marginBottom:"8px"}}/>
+                  <input key={lbl} placeholder={lbl} value={val} onChange={e=>setter(e.target.value)} style={{width:"100%",padding:"9px 12px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:"6px",color:T.cream,fontSize:"13px",boxSizing:"border-box",outline:"none",marginBottom:"8px"}}/>
                 ))}
                 <div style={{display:"flex",gap:"8px"}}>
-                  <button onClick={addNewPlayer} disabled={!newFn.trim()||!newLn.trim()||addingPlayer} style={{flex:1,padding:"10px",background:newFn.trim()&&newLn.trim()?`linear-gradient(135deg,${T.gold},#A07830)`:T.elevated,border:"none",borderRadius:"6px",color:T.isDark?"#0D2B1A":"white",fontSize:"12px",fontWeight:"700",cursor:"pointer",opacity:newFn.trim()&&newLn.trim()?1:0.5}}>{addingPlayer?"Speichere...":"Hinzufügen"}</button>
+                  <button onClick={addNewPlayer} disabled={!newFn.trim()||!newLn.trim()||addingPlayer} style={{flex:1,padding:"10px",background:newFn.trim()&&newLn.trim()?`linear-gradient(135deg,${T.gold},#A07830)`:T.elevated,border:"none",borderRadius:"6px",color:T.isDark?"#0D2B1A":"white",fontSize:"12px",fontWeight:"700",cursor:"pointer",opacity:newFn.trim()&&newLn.trim()?1:0.5}}>{addingPlayer?"...":"Hinzufügen"}</button>
                   <button onClick={()=>setShowAddPlayer(false)} style={{padding:"10px 14px",background:"transparent",border:`1px solid ${T.border}`,borderRadius:"6px",color:T.muted,fontSize:"12px",cursor:"pointer"}}>Abbrechen</button>
                 </div>
               </div>
             )}
-            {selectedIds.size>0&&(
-              <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"14px",fontSize:"11px",color:T.muted}}>
-                <span style={{color:T.blue}}>🔵 {t1Name}: {t1Players.length}</span>{" · "}<span style={{color:T.red}}>🔴 {t2Name}: {t2Players.length}</span>
-                {unassigned.length>0&&<span style={{color:"#E05252"}}>{" · "}{unassigned.length} ohne Team</span>}
-              </div>
-            )}
+            {selectedIds.size>0&&<div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"14px",fontSize:"11px",color:T.muted}}><span style={{color:T.blue}}>🔵 {t1Name}: {t1Players.length}</span>{" · "}<span style={{color:T.red}}>🔴 {t2Name}: {t2Players.length}</span>{unassigned.length>0&&<span style={{color:"#E05252"}}>{" · "}{unassigned.length} ohne Team</span>}</div>}
             <button disabled={!tab1ok} onClick={()=>setTab(2)} style={{width:"100%",padding:"13px",background:tab1ok?`linear-gradient(135deg,${T.gold},#A07830)`:T.elevated,border:"none",borderRadius:"8px",color:tab1ok?T.isDark?"#0D2B1A":"white":T.muted,fontSize:"14px",fontWeight:"900",letterSpacing:"2px",textTransform:"uppercase",cursor:tab1ok?"pointer":"not-allowed",opacity:tab1ok?1:0.5}}>
               Weiter → Matches
             </button>
-            {!tab1ok&&selectedIds.size>0&&<div style={{fontSize:"11px",color:T.faint,textAlign:"center",marginTop:"8px"}}>Alle ausgewählten Spieler einem Team zuordnen</div>}
+            {!tab1ok&&selectedIds.size>0&&<div style={{fontSize:"11px",color:T.faint,textAlign:"center",marginTop:"8px"}}>Alle Spieler einem Team zuordnen · min. {playersPerSlot} pro Team</div>}
           </>
         )}
 
+        {/* ── TAB 2 ── */}
         {tab===2&&(
           <>
             {numDays>1&&(
@@ -636,28 +642,33 @@ function TournamentPlanning({onStart,onBack,T}){
                 ))}
               </div>
             )}
+
             {pickingSlot?(
               <div style={{background:T.gold+"22",border:`1px solid ${T.gold}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"12px",display:"flex",alignItems:"center",gap:"10px"}}>
                 <div style={{fontSize:"16px"}}>{pickingSlot.team==="t1"?"🔵":"🔴"}</div>
-                <div style={{flex:1}}><div style={{fontSize:"12px",fontWeight:"700",color:T.gold}}>Spieler für Match {pickingSlot.matchIdx+1} · {pickingSlot.team==="t1"?t1Name:t2Name}</div><div style={{fontSize:"10px",color:T.muted}}>Tippe einen Spieler unten</div></div>
-                <button onClick={()=>setPickingSlot(null)} style={{background:"transparent",border:"none",color:T.muted,fontSize:"20px",cursor:"pointer"}}>×</button>
+                <div style={{flex:1}}><div style={{fontSize:"12px",fontWeight:"700",color:T.gold}}>Match {pickingSlot.matchIdx+1} · Slot {pickingSlot.slotIdx+1} · {pickingSlot.team==="t1"?t1Name:t2Name}</div><div style={{fontSize:"10px",color:T.muted}}>Tippe einen Spieler unten</div></div>
+                <button onClick={()=>setPickingSlot(null)} style={{background:"transparent",border:"none",color:T.muted,fontSize:"22px",cursor:"pointer",padding:"0 4px"}}>×</button>
               </div>
             ):(
               <div style={{background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"12px",fontSize:"11px",color:T.muted}}>
-                💡 Tippe einen Slot in einem Match um einen Spieler zuzuordnen
+                💡 Tippe einen Spieler-Slot um ihn zuzuordnen
               </div>
             )}
+
+            {/* Player picker */}
             {pickingSlot&&(()=>{
               const teamPlayers=pickingSlot.team==="t1"?t1Players:t2Players;
               const used=usedOnDay(pickingSlot.dayIdx);
               const curSlot=matchAssign[pickingSlot.dayIdx]?.[pickingSlot.matchIdx];
-              const curPlayerId=pickingSlot.team==="t1"?curSlot?.t1Player:curSlot?.t2Player;
+              const curArr=pickingSlot.team==="t1"?curSlot?.t1Players:curSlot?.t2Players;
+              const curPlayerId=curArr?.[pickingSlot.slotIdx];
               const color=pickingSlot.team==="t1"?T.blue:T.red;
               return(
                 <div style={{background:T.cardBg,border:`1px solid ${color}55`,borderRadius:"10px",padding:"10px",marginBottom:"14px"}}>
                   <div style={{fontSize:"10px",color:T.muted,letterSpacing:"1px",marginBottom:"8px"}}>SPIELER WÄHLEN</div>
                   {teamPlayers.map(p=>{
-                    const isUsed=used.has(p.id)&&p.id!==curPlayerId;const isCurrent=p.id===curPlayerId;
+                    const isUsed=used.has(p.id)&&p.id!==curPlayerId;
+                    const isCurrent=p.id===curPlayerId;
                     return(
                       <button key={p.id} disabled={isUsed} onClick={()=>assignPlayerToSlot(p.id)}
                         style={{width:"100%",padding:"10px 12px",marginBottom:"6px",borderRadius:"8px",border:`1px solid ${isCurrent?color:T.border}`,background:isCurrent?color+"22":"transparent",cursor:isUsed?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:"10px",opacity:isUsed?0.4:1}}>
@@ -671,35 +682,43 @@ function TournamentPlanning({onStart,onBack,T}){
                 </div>
               );
             })()}
+
+            {/* Match cards */}
             {(matchAssign[activeDay2]||[]).map((ma,mi)=>{
-              const p1=allSavedPlayers.find(p=>p.id===ma.t1Player);const p2=allSavedPlayers.find(p=>p.id===ma.t2Player);
               const mode=daySettings[activeDay2]?.mode||"scramble";
               return(
                 <div key={mi} style={{background:T.cardBg,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"12px 14px",marginBottom:"10px"}}>
                   <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px"}}>
                     <div style={{fontSize:"13px",fontWeight:"900",color:T.gold}}>Match {mi+1}</div>
-                    <div style={{fontSize:"9px",color:T.faint,fontFamily:"monospace"}}>MATCH{activeDay2*matchesPerDay+mi+1} · {GAME_MODES[mode]?.icon} {GAME_MODES[mode]?.label}</div>
+                    <div style={{fontSize:"9px",color:T.faint,fontFamily:"monospace"}}>MATCH{activeDay2*matchesPerDay+mi+1} · {GAME_MODES[mode]?.icon} {GAME_MODES[mode]?.label} · {matchFormat}</div>
                   </div>
                   <div style={{display:"flex",gap:"8px"}}>
-                    {[[p1,ma.t1Player,T.blue,t1Name,"t1"],[p2,ma.t2Player,T.red,t2Name,"t2"]].map(([player,pid,color,teamName,team])=>{
-                      const isActive=pickingSlot?.dayIdx===activeDay2&&pickingSlot?.matchIdx===mi&&pickingSlot?.team===team;
+                    {[["t1",ma.t1Players,T.blue,t1Name],[["t2"],ma.t2Players,T.red,t2Name]].map(([team,playerIds,color,teamName])=>{
+                      const actualTeam=Array.isArray(team)?team[0]:team;
                       return(
-                        <div key={team} style={{flex:1}}>
+                        <div key={actualTeam} style={{flex:1}}>
                           <div style={{fontSize:"9px",color,letterSpacing:"1px",marginBottom:"5px",fontWeight:"700"}}>{teamName}</div>
-                          <button onClick={()=>{if(isActive){setPickingSlot(null);}else{setPickingSlot({dayIdx:activeDay2,matchIdx:mi,team});window.scrollTo({top:0,behavior:"smooth"});}}}
-                            style={{width:"100%",padding:"10px 8px",borderRadius:"8px",border:`2px solid ${isActive?color:player?color+"55":T.border}`,background:isActive?color+"22":player?color+"11":T.isDark?"#0A2014":T.elevated,cursor:"pointer",display:"flex",alignItems:"center",gap:"8px",minHeight:"52px"}}>
-                            {player?(
-                              <>
-                                <PlayerAvatar name={(player.fn||"")+" "+(player.ln||"")} size={28} color={color} photo={player.photo}/>
-                                <div style={{flex:1,textAlign:"left"}}><div style={{fontSize:"11px",color,fontWeight:"700"}}>{player.fn} {player.ln}</div><div style={{fontSize:"9px",color:T.faint}}>{player.hcp?`HCP ${player.hcp}`:"—"}</div></div>
-                                <span onClick={e=>{e.stopPropagation();clearSlot(activeDay2,mi,team);}} style={{color:T.faint,fontSize:"18px",lineHeight:1,padding:"2px",cursor:"pointer"}}>×</span>
-                              </>
-                            ):(
-                              <div style={{flex:1,textAlign:"center",fontSize:"11px",color:isActive?color:T.faint}}>
-                                {isActive?"↑ Oben wählen":"+ Tippen"}
-                              </div>
-                            )}
-                          </button>
+                          {Array.from({length:playersPerSlot},(_,si)=>{
+                            const pid=playerIds[si];
+                            const player=allSavedPlayers.find(p=>p.id===pid);
+                            const isActive=pickingSlot?.dayIdx===activeDay2&&pickingSlot?.matchIdx===mi&&pickingSlot?.team===actualTeam&&pickingSlot?.slotIdx===si;
+                            return(
+                              <button key={si} onClick={()=>{if(isActive){setPickingSlot(null);}else{setPickingSlot({dayIdx:activeDay2,matchIdx:mi,team:actualTeam,slotIdx:si});window.scrollTo({top:0,behavior:"smooth"});}}}
+                                style={{width:"100%",padding:"8px",borderRadius:"8px",border:`2px solid ${isActive?color:player?color+"55":T.border}`,background:isActive?color+"22":player?color+"11":T.isDark?"#0A2014":T.elevated,cursor:"pointer",display:"flex",alignItems:"center",gap:"6px",minHeight:"44px",marginBottom:si<playersPerSlot-1?"6px":"0"}}>
+                                {player?(
+                                  <>
+                                    <PlayerAvatar name={(player.fn||"")+" "+(player.ln||"")} size={26} color={color} photo={player.photo}/>
+                                    <div style={{flex:1,textAlign:"left"}}><div style={{fontSize:"11px",color,fontWeight:"700"}}>{player.fn} {player.ln}</div></div>
+                                    <span onClick={e=>{e.stopPropagation();clearSlotPlayer(activeDay2,mi,actualTeam,si);}} style={{color:T.faint,fontSize:"16px",lineHeight:1,cursor:"pointer",padding:"2px"}}>×</span>
+                                  </>
+                                ):(
+                                  <div style={{flex:1,textAlign:"center",fontSize:"11px",color:isActive?color:T.faint}}>
+                                    {isActive?"↑ Wählen":"+ Spieler"}
+                                  </div>
+                                )}
+                              </button>
+                            );
+                          })}
                         </div>
                       );
                     })}
@@ -725,8 +744,7 @@ function TournamentPlanning({onStart,onBack,T}){
 function ScoreModal({match,holeIndex,t1Name,t2Name,existing,par,onSave,onClose,T}){
   const [t1,setT1]=useState(existing?.team1??"");
   const [t2,setT2]=useState(existing?.team2??"");
-  const hp=par[holeIndex];
-  const mode=GAME_MODES[match.mode||"scramble"];
+  const hp=par[holeIndex];const mode=GAME_MODES[match.mode||"scramble"];
   const t1Photos=match.t1Photos||{};const t2Photos=match.t2Photos||{};
   const t1PlayerIds=match.t1PlayerIds||[];const t2PlayerIds=match.t2PlayerIds||[];
   return(
@@ -738,26 +756,19 @@ function ScoreModal({match,holeIndex,t1Name,t2Name,existing,par,onSave,onClose,T
             <div style={{fontSize:"15px",fontWeight:"900",color:T.gold,textTransform:"uppercase",letterSpacing:"1px"}}>Loch {holeIndex+1} · {match.name}</div>
             <div style={{fontSize:"11px",color:T.muted,marginTop:"2px"}}>{holeIndex<9?"Runde 1":"Runde 2"} · {mode?.icon} {mode?.label}</div>
           </div>
-          <div style={{textAlign:"center",background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"6px 12px"}}>
-            <div style={{fontSize:"9px",color:T.muted}}>PAR</div>
-            <div style={{fontSize:"22px",fontWeight:"900",color:T.gold,lineHeight:1}}>{hp}</div>
-          </div>
+          <div style={{textAlign:"center",background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"6px 12px"}}><div style={{fontSize:"9px",color:T.muted}}>PAR</div><div style={{fontSize:"22px",fontWeight:"900",color:T.gold,lineHeight:1}}>{hp}</div></div>
         </div>
         <div style={{display:"flex",gap:"12px",marginBottom:"16px"}}>
           {[{name:t1Name,val:t1,set:setT1,color:T.blue,pair:match.t1Pair||[],playerIds:t1PlayerIds,photos:t1Photos},{name:t2Name,val:t2,set:setT2,color:T.red,pair:match.t2Pair||[],playerIds:t2PlayerIds,photos:t2Photos}].map((item,i)=>(
             <div key={i} style={{flex:1,textAlign:"center"}}>
               <div style={{fontSize:"11px",color:item.color,letterSpacing:"1px",textTransform:"uppercase",marginBottom:"6px"}}>{item.name}</div>
-              <div style={{display:"flex",justifyContent:"center",gap:"4px",marginBottom:"6px"}}>
-                {item.pair.map((name,pi)=>{const pid=item.playerIds[pi];const photo=pid?item.photos[pid]:null;return<PlayerAvatar key={pi} name={name} size={32} color={item.color} photo={photo}/>;})}</div>
+              <div style={{display:"flex",justifyContent:"center",gap:"4px",marginBottom:"6px"}}>{item.pair.map((name,pi)=>{const pid=item.playerIds[pi];const photo=pid?item.photos[pid]:null;return<PlayerAvatar key={pi} name={name} size={32} color={item.color} photo={photo}/>;})}</div>
               <div style={{fontSize:"11px",color:item.color,fontWeight:"600",marginBottom:"6px"}}>{item.pair.join(" & ")}</div>
-              <input type="number" min="1" max="12"
-                style={{width:"100%",fontSize:"36px",fontWeight:"900",background:T.isDark?"#060E1A":T.elevated,border:`2px solid ${T.border}`,borderRadius:"8px",color:T.cream,textAlign:"center",padding:"8px 0",outline:"none",boxSizing:"border-box"}}
-                value={item.val} onChange={e=>item.set(e.target.value)} autoFocus={i===0}/>
+              <input type="number" min="1" max="12" style={{width:"100%",fontSize:"36px",fontWeight:"900",background:T.isDark?"#060E1A":T.elevated,border:`2px solid ${T.border}`,borderRadius:"8px",color:T.cream,textAlign:"center",padding:"8px 0",outline:"none",boxSizing:"border-box"}} value={item.val} onChange={e=>item.set(e.target.value)} autoFocus={i===0}/>
             </div>
           ))}
         </div>
-        <button style={{width:"100%",padding:"13px",background:`linear-gradient(135deg,${T.gold},#A07830)`,border:"none",borderRadius:"8px",color:T.isDark?"#0D2B1A":"white",fontSize:"14px",fontWeight:"900",letterSpacing:"2px",cursor:"pointer"}}
-          onClick={()=>{if(t1!==""&&t2!=="")onSave(Number(t1),Number(t2));}}>Speichern</button>
+        <button style={{width:"100%",padding:"13px",background:`linear-gradient(135deg,${T.gold},#A07830)`,border:"none",borderRadius:"8px",color:T.isDark?"#0D2B1A":"white",fontSize:"14px",fontWeight:"900",letterSpacing:"2px",cursor:"pointer"}} onClick={()=>{if(t1!==""&&t2!=="")onSave(Number(t1),Number(t2));}}>Speichern</button>
         <button style={{width:"100%",padding:"10px",background:"transparent",border:`1px solid ${T.border}`,borderRadius:"8px",color:T.muted,fontSize:"13px",cursor:"pointer",marginTop:"8px"}} onClick={onClose}>Abbrechen</button>
       </div>
     </div>
@@ -802,12 +813,12 @@ function MatchCard({match,pars,t1Name,t2Name,canEdit,isAdmin,onHoleClick,onReset
   };
   return(
     <>
-      <div style={{background:T.surface,border:`2px solid ${canEdit?T.gold:T.border}`,borderRadius:"12px",marginBottom:"12px",overflow:"hidden",opacity:canEdit||isAdmin?1:0.45,boxShadow:canEdit?`0 0 0 1px ${T.gold}33,0 4px 20px ${T.gold}18`:"none",transition:"opacity 0.2s"}}>
+      <div style={{background:T.surface,border:`2px solid ${canEdit?T.gold:T.border}`,borderRadius:"12px",marginBottom:"12px",overflow:"hidden",opacity:canEdit||isAdmin?1:0.45,boxShadow:canEdit?`0 0 0 1px ${T.gold}33,0 4px 20px ${T.gold}18`:"none"}}>
         <div style={{padding:"10px 14px",background:canEdit?T.gold+"11":T.isDark?"#0A2014":T.elevated,borderBottom:`1px solid ${T.border}`}}>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:"8px"}}>
             <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
               <div style={{fontSize:"13px",fontWeight:"900",color:canEdit?T.gold:T.cream}}>{match.name}</div>
-              {canEdit&&<div style={{background:T.gold,color:T.isDark?"#0D2B1A":"white",fontSize:"9px",fontWeight:"900",borderRadius:"4px",padding:"2px 8px",letterSpacing:"1px"}}>✏️ DEIN MATCH</div>}
+              {canEdit&&<div style={{background:T.gold,color:T.isDark?"#0D2B1A":"white",fontSize:"9px",fontWeight:"900",borderRadius:"4px",padding:"2px 8px"}}>✏️ DEIN MATCH</div>}
               <div style={{fontSize:"10px",color:T.faint}}>{mode?.icon} {mode?.label}</div>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
@@ -815,22 +826,15 @@ function MatchCard({match,pars,t1Name,t2Name,canEdit,isAdmin,onHoleClick,onReset
               {(canEdit||isAdmin)&&<button onClick={()=>setShowReset(true)} style={{background:"transparent",border:`1px solid ${T.border}`,borderRadius:"6px",color:T.faint,padding:"4px 7px",cursor:"pointer",display:"flex",alignItems:"center",gap:"4px",fontSize:"10px"}}><IconReset size={11} color={T.faint}/></button>}
             </div>
           </div>
-          {/* Player rows with avatars */}
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
               {t1PlayerIds.map((pid,i)=><PlayerAvatar key={i} name={(match.t1Pair||[])[i]||""} size={28} color={T.blue} photo={t1Photos[pid]||null}/>)}
-              <div>
-                <div style={{fontSize:"11px",color:T.blue,fontWeight:"700"}}>{(match.t1Pair||[]).join(" & ")}</div>
-                {match.teamHcp1!=null&&<div style={{fontSize:"9px",color:T.blue+"88"}}>HCP {match.teamHcp1}</div>}
-              </div>
+              <div><div style={{fontSize:"11px",color:T.blue,fontWeight:"700"}}>{(match.t1Pair||[]).join(" & ")}</div>{match.teamHcp1!=null&&<div style={{fontSize:"9px",color:T.blue+"88"}}>HCP {match.teamHcp1}</div>}</div>
             </div>
             <div style={{fontSize:"10px",color:T.muted}}>vs</div>
             <div style={{display:"flex",alignItems:"center",gap:"6px",flexDirection:"row-reverse"}}>
               {t2PlayerIds.map((pid,i)=><PlayerAvatar key={i} name={(match.t2Pair||[])[i]||""} size={28} color={T.red} photo={t2Photos[pid]||null}/>)}
-              <div style={{textAlign:"right"}}>
-                <div style={{fontSize:"11px",color:T.red,fontWeight:"700"}}>{(match.t2Pair||[]).join(" & ")}</div>
-                {match.teamHcp2!=null&&<div style={{fontSize:"9px",color:T.red+"88"}}>HCP {match.teamHcp2}</div>}
-              </div>
+              <div style={{textAlign:"right"}}><div style={{fontSize:"11px",color:T.red,fontWeight:"700"}}>{(match.t2Pair||[]).join(" & ")}</div>{match.teamHcp2!=null&&<div style={{fontSize:"9px",color:T.red+"88"}}>HCP {match.teamHcp2}</div>}</div>
             </div>
           </div>
         </div>
@@ -855,75 +859,31 @@ function StatsTab({days,t1Name,t2Name,T}){
   const stats=calcStats(days,t1Name,t2Name);
   const totalHoles=stats.t1TotalHoles+stats.t2TotalHoles;
   const t1HolePct=totalHoles>0?Math.round((stats.t1TotalHoles/totalHoles)*100):50;
-  const SectionTitle=({children})=>(
-    <div style={{fontSize:"10px",color:T.gold,letterSpacing:"2px",textTransform:"uppercase",fontWeight:"700",marginBottom:"10px",marginTop:"18px",display:"flex",alignItems:"center",gap:"6px"}}>
-      <div style={{flex:1,height:"1px",background:T.border}}/>{children}<div style={{flex:1,height:"1px",background:T.border}}/>
-    </div>
-  );
-  const PairRow=({pair,maxPts})=>{
-    const pct=maxPts>0?(pair.pts/maxPts)*100:0;const color=pair.team==="t1"?T.blue:T.red;
-    return(
-      <div style={{marginBottom:"10px"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"4px"}}>
-          <div style={{fontSize:"12px",color:T.cream,fontWeight:"600"}}>{pair.name}</div>
-          <div style={{display:"flex",gap:"12px",fontSize:"11px"}}><span style={{color:T.muted}}>{pair.holesWon} Löcher</span><span style={{color,fontWeight:"700"}}>{fmt(pair.pts)} Pts</span></div>
-        </div>
-        <div style={{height:"6px",background:T.elevated,borderRadius:"3px",overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",background:color,borderRadius:"3px",transition:"width 0.6s ease"}}/></div>
-      </div>
-    );
-  };
+  const SectionTitle=({children})=>(<div style={{fontSize:"10px",color:T.gold,letterSpacing:"2px",textTransform:"uppercase",fontWeight:"700",marginBottom:"10px",marginTop:"18px",display:"flex",alignItems:"center",gap:"6px"}}><div style={{flex:1,height:"1px",background:T.border}}/>{children}<div style={{flex:1,height:"1px",background:T.border}}/></div>);
+  const PairRow=({pair,maxPts})=>{const pct=maxPts>0?(pair.pts/maxPts)*100:0;const color=pair.team==="t1"?T.blue:T.red;return(<div style={{marginBottom:"10px"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"4px"}}><div style={{fontSize:"12px",color:T.cream,fontWeight:"600"}}>{pair.name}</div><div style={{display:"flex",gap:"12px",fontSize:"11px"}}><span style={{color:T.muted}}>{pair.holesWon} Löcher</span><span style={{color,fontWeight:"700"}}>{fmt(pair.pts)} Pts</span></div></div><div style={{height:"6px",background:T.elevated,borderRadius:"3px",overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",background:color,borderRadius:"3px",transition:"width 0.6s"}}/></div></div>);};
   const maxT1=Math.max(...stats.t1Pairs.map(p=>p.pts),1);const maxT2=Math.max(...stats.t2Pairs.map(p=>p.pts),1);
-  return(
-    <div style={{paddingBottom:"20px"}}>
-      <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"12px"}}>
-        <div style={{fontSize:"11px",color:T.muted,letterSpacing:"1px",marginBottom:"10px",textTransform:"uppercase"}}>Gewonnene Löcher</div>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:"8px"}}>
-          <div><div style={{fontSize:"11px",color:T.blue,fontWeight:"700"}}>🔵 {t1Name}</div><div style={{fontSize:"32px",fontWeight:"900",color:T.blue,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{stats.t1TotalHoles}</div></div>
-          <div style={{textAlign:"right"}}><div style={{fontSize:"11px",color:T.red,fontWeight:"700"}}>🔴 {t2Name}</div><div style={{fontSize:"32px",fontWeight:"900",color:T.red,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{stats.t2TotalHoles}</div></div>
-        </div>
-        <div style={{height:"12px",borderRadius:"6px",overflow:"hidden",display:"flex"}}>
-          <div style={{width:`${t1HolePct}%`,background:T.blue,transition:"width 0.6s ease"}}/><div style={{flex:1,background:T.red}}/>
-        </div>
-      </div>
-      <SectionTitle>🔵 {t1Name}</SectionTitle>
-      <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"12px"}}>
-        {stats.t1Pairs.length===0?<div style={{fontSize:"12px",color:T.faint,textAlign:"center"}}>Noch keine Daten</div>:stats.t1Pairs.map((p,i)=><PairRow key={i} pair={p} maxPts={maxT1}/>)}
-      </div>
-      <SectionTitle>🔴 {t2Name}</SectionTitle>
-      <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"12px"}}>
-        {stats.t2Pairs.length===0?<div style={{fontSize:"12px",color:T.faint,textAlign:"center"}}>Noch keine Daten</div>:stats.t2Pairs.map((p,i)=><PairRow key={i} pair={p} maxPts={maxT2}/>)}
-      </div>
-      <SectionTitle>🌟 Top Performer</SectionTitle>
-      <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px"}}>
-        {stats.allPairs.filter(p=>p.pts>0).length===0?<div style={{fontSize:"12px",color:T.faint,textAlign:"center"}}>Noch keine abgeschlossenen Runden</div>:(
-          stats.allPairs.filter(p=>p.pts>0).sort((a,b)=>b.pts-a.pts).slice(0,3).map((p,i)=>{
-            const color=p.team==="t1"?T.blue:T.red;
-            return(
-              <div key={i} style={{display:"flex",alignItems:"center",gap:"12px",padding:"10px",background:T.elevated,borderRadius:"8px",marginBottom:"8px",border:`1px solid ${color}33`}}>
-                <div style={{fontSize:"20px"}}>{"🥇🥈🥉"[i]||"⛳"}</div>
-                <div style={{flex:1}}><div style={{fontSize:"12px",fontWeight:"700",color}}>{p.name}</div><div style={{fontSize:"10px",color:T.faint}}>{p.team==="t1"?t1Name:t2Name} · {p.holesWon} Löcher</div></div>
-                <div style={{fontSize:"20px",fontWeight:"900",color,fontFamily:"'Arial Black',sans-serif"}}>{fmt(p.pts)}</div>
-              </div>
-            );
-          })
-        )}
-      </div>
+  return(<div style={{paddingBottom:"20px"}}>
+    <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"12px"}}>
+      <div style={{fontSize:"11px",color:T.muted,letterSpacing:"1px",marginBottom:"10px",textTransform:"uppercase"}}>Gewonnene Löcher</div>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:"8px"}}><div><div style={{fontSize:"11px",color:T.blue,fontWeight:"700"}}>🔵 {t1Name}</div><div style={{fontSize:"32px",fontWeight:"900",color:T.blue,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{stats.t1TotalHoles}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:"11px",color:T.red,fontWeight:"700"}}>🔴 {t2Name}</div><div style={{fontSize:"32px",fontWeight:"900",color:T.red,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{stats.t2TotalHoles}</div></div></div>
+      <div style={{height:"12px",borderRadius:"6px",overflow:"hidden",display:"flex"}}><div style={{width:`${t1HolePct}%`,background:T.blue,transition:"width 0.6s"}}/><div style={{flex:1,background:T.red}}/></div>
     </div>
-  );
+    <SectionTitle>🔵 {t1Name}</SectionTitle>
+    <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"12px"}}>{stats.t1Pairs.length===0?<div style={{fontSize:"12px",color:T.faint,textAlign:"center"}}>Noch keine Daten</div>:stats.t1Pairs.map((p,i)=><PairRow key={i} pair={p} maxPts={maxT1}/>)}</div>
+    <SectionTitle>🔴 {t2Name}</SectionTitle>
+    <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"12px"}}>{stats.t2Pairs.length===0?<div style={{fontSize:"12px",color:T.faint,textAlign:"center"}}>Noch keine Daten</div>:stats.t2Pairs.map((p,i)=><PairRow key={i} pair={p} maxPts={maxT2}/>)}</div>
+    <SectionTitle>🌟 Top Performer</SectionTitle>
+    <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px"}}>{stats.allPairs.filter(p=>p.pts>0).length===0?<div style={{fontSize:"12px",color:T.faint,textAlign:"center"}}>Noch keine abgeschlossenen Runden</div>:stats.allPairs.filter(p=>p.pts>0).sort((a,b)=>b.pts-a.pts).slice(0,3).map((p,i)=>{const color=p.team==="t1"?T.blue:T.red;return(<div key={i} style={{display:"flex",alignItems:"center",gap:"12px",padding:"10px",background:T.elevated,borderRadius:"8px",marginBottom:"8px",border:`1px solid ${color}33`}}><div style={{fontSize:"20px"}}>{"🥇🥈🥉"[i]}</div><div style={{flex:1}}><div style={{fontSize:"12px",fontWeight:"700",color}}>{p.name}</div><div style={{fontSize:"10px",color:T.faint}}>{p.team==="t1"?t1Name:t2Name} · {p.holesWon} Löcher</div></div><div style={{fontSize:"20px",fontWeight:"900",color,fontFamily:"'Arial Black',sans-serif"}}>{fmt(p.pts)}</div></div>);})}</div>
+  </div>);
 }
 
 function DaySummary({day,t1Name,t2Name,T}){
   const course=COURSES[day.courseKey]||Object.values(COURSES)[0];let t1=0,t2=0;
   day.matches.forEach(m=>{[0,1].forEach(r=>{const rs=calcRoundStatus(m.scores,course.par,r*9,r*9+9);const p=getPoints(rs);if(p){t1+=p.t1;t2+=p.t2;}});});
-  return(
-    <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-      <div><div style={{fontSize:"11px",color:T.gold,fontWeight:"700"}}>{day.label}</div><div style={{fontSize:"10px",color:T.faint}}>{course.shortName} · {day.matches.length} Matches</div></div>
-      <div style={{display:"flex",gap:"8px",alignItems:"center"}}><span style={{color:T.blue,fontWeight:"700",fontSize:"16px"}}>{fmt(t1)}</span><span style={{color:T.muted,fontSize:"11px"}}>:</span><span style={{color:T.red,fontWeight:"700",fontSize:"16px"}}>{fmt(t2)}</span></div>
-    </div>
-  );
+  return(<div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:"11px",color:T.gold,fontWeight:"700"}}>{day.label}</div><div style={{fontSize:"10px",color:T.faint}}>{course.shortName} · {day.matches.length} Matches</div></div><div style={{display:"flex",gap:"8px",alignItems:"center"}}><span style={{color:T.blue,fontWeight:"700",fontSize:"16px"}}>{fmt(t1)}</span><span style={{color:T.muted,fontSize:"11px"}}>:</span><span style={{color:T.red,fontWeight:"700",fontSize:"16px"}}>{fmt(t2)}</span></div></div>);
 }
 
-function Dashboard({config,role,onBack,theme,onThemeChange}){
+function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
   const T=THEMES[theme];
   const {t1Name,t2Name,days}=config;
   const [modal,setModal]=useState(null);
@@ -931,18 +891,15 @@ function Dashboard({config,role,onBack,theme,onThemeChange}){
   const [saving,setSaving]=useState(false);
   const [showPush,setShowPush]=useState(true);
   const [toast,setToast]=useState(null);
-  const [showSettings,setShowSettings]=useState(false);
   const [resetAll,setResetAll]=useState(false);
   const [winEvent,setWinEvent]=useState(null);
   const [confetti,setConfetti]=useState(false);
+  const [showEndConfirm,setShowEndConfirm]=useState(false);
   const prevRef=useRef(null);
-
   const isAdmin=role==="admin",isViewer=role==="viewer";
   const editableIds=isAdmin?"all":isViewer?[]:(() => {
-    const idx=parseInt(role.split("-")[1]);
-    const all=[];days.forEach(d=>d.matches.forEach(m=>all.push(m.id)));
-    const perDay=days[0]?.matches.length||4;
-    return[all[idx],all[idx+perDay]].filter(id=>id!==undefined);
+    const idx=parseInt(role.split("-")[1]);const all=[];days.forEach(d=>d.matches.forEach(m=>all.push(m.id)));
+    const perDay=days[0]?.matches.length||4;return[all[idx],all[idx+perDay]].filter(id=>id!==undefined);
   })();
   const canEdit=id=>editableIds==="all"||editableIds.includes(id);
   const myMatchName=!isAdmin&&!isViewer?(()=>{const idx=parseInt(role.split("-")[1]);const all=[];days.forEach(d=>d.matches.forEach(m=>all.push(m.name)));return all[idx]||null;})():null;
@@ -951,14 +908,12 @@ function Dashboard({config,role,onBack,theme,onThemeChange}){
   useEffect(()=>{if(prevRef.current){const change=detectPointChange(prevRef.current,days,t1Name,t2Name);if(change){setToast(change);if(change.winner){setWinEvent(change);setConfetti(true);}}}prevRef.current=days;},[days]);
 
   const stats=calcTournament(days);const t1W=Math.max(5,Math.min(95,stats.t1WinProb));
-
   const doReset=async matchId=>{setSaving(true);const nd=days.map(day=>({...day,matches:day.matches.map(m=>m.id===matchId?{...m,scores:emptyScores()}:m)}));await saveTournament({...config,days:nd});setSaving(false);};
   const doResetAll=async()=>{setSaving(true);const nd=days.map(day=>({...day,matches:day.matches.map(m=>({...m,scores:emptyScores()}))}));await saveTournament({...config,days:nd});setSaving(false);setResetAll(false);};
   const saveScore=async(dayId,matchId,hi,t1s,t2s)=>{
     setSaving(true);
     const nd=days.map(day=>{if(day.id!==dayId)return day;return{...day,matches:day.matches.map(m=>{if(m.id!==matchId)return m;const ns=[...m.scores];ns[hi]={team1:t1s,team2:t2s};return{...m,scores:ns};})};});
-    const change=detectPointChange(days,nd,t1Name,t2Name);
-    if(change)await sendPushToAll(change.title,change.body,change.key);
+    const change=detectPointChange(days,nd,t1Name,t2Name);if(change)await sendPushToAll(change.title,change.body,change.key);
     await saveTournament({...config,days:nd});setSaving(false);setModal(null);
   };
 
@@ -976,73 +931,141 @@ function Dashboard({config,role,onBack,theme,onThemeChange}){
       <Confetti active={confetti} onDone={()=>setConfetti(false)}/>
       <WinBanner event={winEvent} onDone={()=>setWinEvent(null)}/>
       {toast&&<Toast message={toast} onDismiss={()=>setToast(null)}/>}
-      {showSettings&&<SettingsPanel T={T} currentTheme={theme} onThemeChange={onThemeChange} onClose={()=>setShowSettings(false)}/>}
       {resetAll&&<ResetConfirm title="Alle Matches zurücksetzen?" message="Wirklich ALLE Scores löschen?" onConfirm={doResetAll} onClose={()=>setResetAll(false)} T={T}/>}
-      <Header title="Ryder Cup" onBack={onBack} backLabel="Menü" T={T}
-        rightSlot={<div style={{display:"flex",alignItems:"center",gap:"8px"}}>
-          <div style={{display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"6px",height:"6px",borderRadius:"50%",background:saving?"#C9A84C":"#4CAF50"}}/><div style={{fontSize:"9px",color:"rgba(255,255,255,0.4)",letterSpacing:"1px"}}>{saving?"...":"Live"}</div></div>
-          <button style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.6)",cursor:"pointer",padding:"4px",display:"flex"}} onClick={()=>setShowSettings(true)}><IconSettings size={20} color="rgba(255,255,255,0.6)"/></button>
-        </div>}/>
+      {showEndConfirm&&<ResetConfirm title="Turnier beenden?" message="Das Turnier wird archiviert und ist danach unter 'Match Archiv' einsehbar." confirmLabel="Ja, Turnier beenden" danger={false} onConfirm={()=>{setShowEndConfirm(false);onEndTournament(config);}} onClose={()=>setShowEndConfirm(false)} T={T}/>}
+
+      <Header title="Ryder Cup" onBack={onBack} backLabel="Menü" theme={theme} onThemeToggle={onThemeToggle} T={T}
+        rightSlot={<div style={{display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"6px",height:"6px",borderRadius:"50%",background:saving?"#C9A84C":"#4CAF50"}}/><div style={{fontSize:"9px",color:"rgba(255,255,255,0.4)",letterSpacing:"1px"}}>{saving?"...":"Live"}</div></div>}/>
+
       <div style={{padding:"14px",maxWidth:"480px",margin:"0 auto"}}>
         {showPush&&!pushGranted&&<PushBanner onDismiss={()=>setShowPush(false)} T={T}/>}
         <div style={{display:"flex",alignItems:"center",justifyContent:"center",marginBottom:"12px"}}><RoleBadge role={role} T={T}/></div>
         {myMatchName&&<div style={{background:T.isDark?`linear-gradient(135deg,${T.gold}22,${T.gold}11)`:T.gold+"18",border:`1px solid ${T.gold}55`,borderRadius:"10px",padding:"10px 14px",marginBottom:"14px",display:"flex",alignItems:"center",gap:"10px"}}><div style={{fontSize:"16px"}}>⛳</div><div><div style={{fontSize:"12px",fontWeight:"700",color:T.gold}}>Du spielst {myMatchName}</div><div style={{fontSize:"10px",color:T.faint}}>Tippe auf ein Loch zum Eintragen</div></div></div>}
+
         <div style={{background:T.cardBg,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"14px"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"10px"}}>
-            <div><div style={{fontSize:"12px",fontWeight:"700",color:T.blue,textTransform:"uppercase",letterSpacing:"1px"}}>🔵 {t1Name}</div><div style={{fontSize:"40px",fontWeight:"900",color:T.blue,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{fmt(stats.t1Confirmed)}</div><div style={{fontSize:"10px",color:T.faint}}>proj. {stats.t1Projected} Pts</div></div>
+            <div><div style={{fontSize:"12px",fontWeight:"700",color:T.blue,textTransform:"uppercase",letterSpacing:"1px"}}>🔵 {t1Name}</div><div style={{fontSize:"40px",fontWeight:"900",color:T.blue,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{fmt(stats.t1Confirmed)}</div><div style={{fontSize:"10px",color:T.faint}}>proj. {stats.t1Projected}</div></div>
             <div style={{textAlign:"center"}}><div style={{fontSize:"9px",color:T.muted}}>ZIEL</div><div style={{fontSize:"20px",fontWeight:"900",color:T.gold}}>{stats.needed}</div><div style={{fontSize:"9px",color:T.faint}}>von {stats.totalPoints}</div></div>
-            <div style={{textAlign:"right"}}><div style={{fontSize:"12px",fontWeight:"700",color:T.red,textTransform:"uppercase",letterSpacing:"1px"}}>🔴 {t2Name}</div><div style={{fontSize:"40px",fontWeight:"900",color:T.red,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{fmt(stats.t2Confirmed)}</div><div style={{fontSize:"10px",color:T.faint,textAlign:"right"}}>proj. {stats.t2Projected} Pts</div></div>
+            <div style={{textAlign:"right"}}><div style={{fontSize:"12px",fontWeight:"700",color:T.red,textTransform:"uppercase",letterSpacing:"1px"}}>🔴 {t2Name}</div><div style={{fontSize:"40px",fontWeight:"900",color:T.red,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{fmt(stats.t2Confirmed)}</div><div style={{fontSize:"10px",color:T.faint,textAlign:"right"}}>proj. {stats.t2Projected}</div></div>
           </div>
-          <div style={{height:"16px",borderRadius:"8px",overflow:"hidden",display:"flex",margin:"4px 0"}}>
-            <div style={{width:`${t1W}%`,background:T.blue,transition:"width 0.6s ease"}}/><div style={{flex:1,background:T.red}}/>
-          </div>
-          <div style={{display:"flex",justifyContent:"space-between",fontSize:"10px",color:T.muted}}>
-            <span>{stats.t1WinProb}% Sieg</span><span>{stats.t2WinProb}% Sieg</span>
-          </div>
-          <div style={{marginTop:"10px",display:"flex",flexDirection:"column",gap:"6px"}}>
-            {days.map(d=><DaySummary key={d.id} day={d} t1Name={t1Name} t2Name={t2Name} T={T}/>)}
-          </div>
+          <div style={{height:"16px",borderRadius:"8px",overflow:"hidden",display:"flex",margin:"4px 0"}}><div style={{width:`${t1W}%`,background:T.blue,transition:"width 0.6s"}}/><div style={{flex:1,background:T.red}}/></div>
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:"10px",color:T.muted}}><span>{stats.t1WinProb}% Sieg</span><span>{stats.t2WinProb}% Sieg</span></div>
+          <div style={{marginTop:"10px",display:"flex",flexDirection:"column",gap:"6px"}}>{days.map(d=><DaySummary key={d.id} day={d} t1Name={t1Name} t2Name={t2Name} T={T}/>)}</div>
         </div>
+
         <div style={{display:"flex",marginBottom:"14px",borderRadius:"8px",overflow:"hidden",border:`1px solid ${T.border}`}}>
-          {tabs.map((tab,i)=>(
-            <button key={tab.key} style={{flex:1,padding:"10px 4px",background:activeTab===tab.key?T.elevated:T.isDark?"#0A2014":T.bg,border:"none",borderLeft:i>0?`1px solid ${T.border}`:"none",color:activeTab===tab.key?T.gold:T.muted,cursor:"pointer",fontSize:"10px",letterSpacing:"0.5px",textTransform:"uppercase",fontWeight:activeTab===tab.key?"700":"400",display:"flex",alignItems:"center",justifyContent:"center",gap:"4px"}}
-              onClick={()=>setActiveTab(tab.key)}>{tab.icon}{tab.label}</button>
-          ))}
+          {tabs.map((tab,i)=>(<button key={tab.key} style={{flex:1,padding:"10px 4px",background:activeTab===tab.key?T.elevated:T.isDark?"#0A2014":T.bg,border:"none",borderLeft:i>0?`1px solid ${T.border}`:"none",color:activeTab===tab.key?T.gold:T.muted,cursor:"pointer",fontSize:"10px",letterSpacing:"0.5px",textTransform:"uppercase",fontWeight:activeTab===tab.key?"700":"400",display:"flex",alignItems:"center",justifyContent:"center",gap:"4px"}} onClick={()=>setActiveTab(tab.key)}>{tab.icon}{tab.label}</button>))}
         </div>
+
         {activeTab==="stats"&&<StatsTab days={days} t1Name={t1Name} t2Name={t2Name} T={T}/>}
         {activeDay&&course&&(
           <>
             <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"12px"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}>
-                <div><div style={{fontSize:"13px",fontWeight:"700",color:T.cream}}>{course.name}</div><div style={{fontSize:"11px",color:T.faint}}>{course.location}</div></div>
-                <div style={{textAlign:"right"}}><div style={{fontSize:"10px",color:T.muted}}>Par</div><div style={{fontSize:"18px",fontWeight:"900",color:T.gold}}>{course.par.slice(0,9).reduce((a,b)=>a+b,0)} / {course.par.slice(9).reduce((a,b)=>a+b,0)}</div></div>
-              </div>
-              {[0,1].map(r=>(
-                <div key={r} style={{display:"grid",gridTemplateColumns:"repeat(9,1fr)",gap:"3px",marginBottom:r===0?"3px":"0"}}>
-                  {course.par.slice(r*9,r*9+9).map((p,i)=>(
-                    <div key={i} style={{textAlign:"center",fontSize:"9px",padding:"2px 0",borderRadius:"3px",background:T.holeBg,color:T.holeText}}>
-                      <div style={{opacity:0.6}}>{r*9+i+1}</div><div style={{fontWeight:"700"}}>P{p}</div>
-                    </div>
-                  ))}
-                </div>
-              ))}
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}><div><div style={{fontSize:"13px",fontWeight:"700",color:T.cream}}>{course.name}</div><div style={{fontSize:"11px",color:T.faint}}>{course.location}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:"10px",color:T.muted}}>Par</div><div style={{fontSize:"18px",fontWeight:"900",color:T.gold}}>{course.par.slice(0,9).reduce((a,b)=>a+b,0)} / {course.par.slice(9).reduce((a,b)=>a+b,0)}</div></div></div>
+              {[0,1].map(r=>(<div key={r} style={{display:"grid",gridTemplateColumns:"repeat(9,1fr)",gap:"3px",marginBottom:r===0?"3px":"0"}}>{course.par.slice(r*9,r*9+9).map((p,i)=>(<div key={i} style={{textAlign:"center",fontSize:"9px",padding:"2px 0",borderRadius:"3px",background:T.holeBg,color:T.holeText}}><div style={{opacity:0.6}}>{r*9+i+1}</div><div style={{fontWeight:"700"}}>P{p}</div></div>))}</div>))}
             </div>
-            {activeDay.matches.map(m=>(
-              <MatchCard key={m.id} match={m} pars={course.par} t1Name={t1Name} t2Name={t2Name}
-                canEdit={canEdit(m.id)} isAdmin={isAdmin} T={T}
-                onHoleClick={(matchId,hi)=>setModal({dayId:activeDay.id,matchId,holeIndex:hi})}
-                onReset={doReset}/>
-            ))}
-            {isAdmin&&<button style={{width:"100%",padding:"12px",background:"transparent",border:"1px solid #E05252",borderRadius:"8px",color:"#E05252",fontSize:"12px",cursor:"pointer",marginTop:"4px",display:"flex",alignItems:"center",justifyContent:"center",gap:"8px",letterSpacing:"1px"}} onClick={()=>setResetAll(true)}><IconReset size={14} color="#E05252"/> Alle Matches zurücksetzen</button>}
+            {activeDay.matches.map(m=>(<MatchCard key={m.id} match={m} pars={course.par} t1Name={t1Name} t2Name={t2Name} canEdit={canEdit(m.id)} isAdmin={isAdmin} T={T} onHoleClick={(matchId,hi)=>setModal({dayId:activeDay.id,matchId,holeIndex:hi})} onReset={doReset}/>))}
+            {isAdmin&&(<>
+              <button style={{width:"100%",padding:"12px",background:"transparent",border:"1px solid #E05252",borderRadius:"8px",color:"#E05252",fontSize:"12px",cursor:"pointer",marginTop:"4px",display:"flex",alignItems:"center",justifyContent:"center",gap:"8px"}} onClick={()=>setResetAll(true)}><IconReset size={14} color="#E05252"/> Alle Matches zurücksetzen</button>
+              <button style={{width:"100%",padding:"12px",background:"transparent",border:`1px solid ${T.gold}55`,borderRadius:"8px",color:T.gold,fontSize:"12px",cursor:"pointer",marginTop:"8px",display:"flex",alignItems:"center",justifyContent:"center",gap:"8px"}} onClick={()=>setShowEndConfirm(true)}><IconArchive size={14} color={T.gold}/> Turnier beenden & archivieren</button>
+            </>)}
           </>
         )}
       </div>
       {modal&&mMatch&&mDay&&(
-        <ScoreModal match={mMatch} holeIndex={modal.holeIndex} t1Name={t1Name} t2Name={t2Name}
-          par={(COURSES[mDay.courseKey]||Object.values(COURSES)[0]).par} existing={mMatch.scores[modal.holeIndex]}
-          onSave={(t1s,t2s)=>saveScore(modal.dayId,modal.matchId,modal.holeIndex,t1s,t2s)}
-          onClose={()=>setModal(null)} T={T}/>
+        <ScoreModal match={mMatch} holeIndex={modal.holeIndex} t1Name={t1Name} t2Name={t2Name} par={(COURSES[mDay.courseKey]||Object.values(COURSES)[0]).par} existing={mMatch.scores[modal.holeIndex]} onSave={(t1s,t2s)=>saveScore(modal.dayId,modal.matchId,modal.holeIndex,t1s,t2s)} onClose={()=>setModal(null)} T={T}/>
       )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MATCH ARCHIVE
+// ══════════════════════════════════════════════════════════════════════════════
+function MatchArchive({onBack,T,theme,onThemeToggle}){
+  const [archived,setArchived]=useState([]);
+  const [loading,setLoading]=useState(true);
+  const [expanded,setExpanded]=useState(null);
+  const [confirmDelete,setConfirmDelete]=useState(null);
+
+  useEffect(()=>{
+    getDocs(collection(db,"tournamentArchive")).then(snap=>{
+      const docs=snap.docs.map(d=>({_id:d.id,...d.data()}));
+      docs.sort((a,b)=>(b.archivedAt||0)-(a.archivedAt||0));
+      setArchived(docs);setLoading(false);
+    }).catch(()=>setLoading(false));
+  },[]);
+
+  const deleteEntry=async id=>{
+    await deleteDoc(doc(db,"tournamentArchive",id)).catch(()=>{});
+    setArchived(prev=>prev.filter(a=>a._id!==id));setConfirmDelete(null);
+  };
+
+  return(
+    <div style={{minHeight:"100vh",background:T.bg,color:T.cream,fontFamily:"Georgia,serif"}}>
+      <Header title="Match Archiv" onBack={onBack} backLabel="Menü" theme={theme} onThemeToggle={onThemeToggle} T={T}/>
+      <div style={{padding:"14px",maxWidth:"480px",margin:"0 auto"}}>
+        {loading&&<div style={{textAlign:"center",padding:"40px",color:T.muted}}>Lade...</div>}
+        {!loading&&archived.length===0&&(
+          <div style={{textAlign:"center",padding:"60px 20px"}}>
+            <div style={{fontSize:"40px",marginBottom:"12px"}}>📦</div>
+            <div style={{color:T.gold,fontSize:"16px",fontWeight:"700",marginBottom:"8px"}}>Noch keine archivierten Turniere</div>
+            <div style={{color:T.muted,fontSize:"13px"}}>Beende ein aktives Turnier um es hier zu speichern</div>
+          </div>
+        )}
+        {archived.map(entry=>{
+          const isOpen=expanded===entry._id;
+          const stats=entry.days?calcTournament(entry.days):null;
+          return(
+            <div key={entry._id} style={{background:T.cardBg,border:`1px solid ${T.border}`,borderRadius:"12px",marginBottom:"12px",overflow:"hidden"}}>
+              <div style={{padding:"12px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:"12px"}} onClick={()=>setExpanded(isOpen?null:entry._id)}>
+                <div style={{fontSize:"28px"}}>🏆</div>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:"13px",fontWeight:"700",color:T.gold}}>{entry.t1Name} vs {entry.t2Name}</div>
+                  <div style={{fontSize:"11px",color:T.muted,marginTop:"2px"}}>{entry.archivedAtLabel||"—"} · {entry.days?.length||0} Tage · {entry.days?.reduce((s,d)=>s+d.matches.length,0)||0} Matches</div>
+                  {stats&&<div style={{fontSize:"11px",marginTop:"4px"}}><span style={{color:T.blue,fontWeight:"700"}}>{fmt(stats.t1Confirmed)}</span><span style={{color:T.muted}}> : </span><span style={{color:T.red,fontWeight:"700"}}>{fmt(stats.t2Confirmed)}</span></div>}
+                </div>
+                <div style={{display:"flex",gap:"6px",alignItems:"center"}}>
+                  <button onClick={e=>{e.stopPropagation();setConfirmDelete(entry);}} style={{padding:"6px 8px",background:"transparent",border:"1px solid #E0525244",borderRadius:"6px",color:"#E05252",cursor:"pointer"}}><IconTrash size={13} color="#E05252"/></button>
+                  <div style={{fontSize:"18px",color:T.faint,transform:isOpen?"rotate(90deg)":"rotate(0deg)",transition:"transform 0.2s"}}>›</div>
+                </div>
+              </div>
+              {isOpen&&entry.days&&(
+                <div style={{borderTop:`1px solid ${T.border}`,padding:"12px 14px"}}>
+                  {entry.days.map((day,di)=>{
+                    const course=COURSES[day.courseKey]||Object.values(COURSES)[0];
+                    let dayT1=0,dayT2=0;day.matches.forEach(m=>{[0,1].forEach(r=>{const rs=calcRoundStatus(m.scores,course.par,r*9,r*9+9);const p=getPoints(rs);if(p){dayT1+=p.t1;dayT2+=p.t2;}});});
+                    return(
+                      <div key={di} style={{marginBottom:"12px"}}>
+                        <div style={{fontSize:"11px",color:T.gold,fontWeight:"700",marginBottom:"8px"}}>{day.label} – <span style={{color:T.blue}}>{fmt(dayT1)}</span> : <span style={{color:T.red}}>{fmt(dayT2)}</span></div>
+                        {day.matches.map(m=>{
+                          const r1=calcRoundStatus(m.scores,course.par,0,9);const r2=calcRoundStatus(m.scores,course.par,9,18);
+                          const p1=getPoints(r1);const p2=getPoints(r2);
+                          return(
+                            <div key={m.id} style={{background:T.isDark?"#0A2014":T.elevated,borderRadius:"8px",padding:"8px 10px",marginBottom:"6px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                              <div>
+                                <div style={{fontSize:"11px",fontWeight:"700",color:T.cream}}>{m.name}</div>
+                                <div style={{fontSize:"10px",color:T.blue}}>{(m.t1Pair||[]).join(" & ")}</div>
+                                <div style={{fontSize:"10px",color:T.red}}>{(m.t2Pair||[]).join(" & ")}</div>
+                              </div>
+                              <div style={{textAlign:"right"}}>
+                                {[["R1",p1],["R2",p2]].map(([lbl,pts])=>(
+                                  <div key={lbl} style={{fontSize:"10px",color:T.muted}}>{lbl}: {pts?<><span style={{color:T.blue}}>{pts.t1}</span>–<span style={{color:T.red}}>{pts.t2}</span></>:"laufend"}</div>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {confirmDelete&&<ResetConfirm title="Archiveintrag löschen?" message={`"${confirmDelete.t1Name} vs ${confirmDelete.t2Name}" wird dauerhaft gelöscht.`} onConfirm={()=>deleteEntry(confirmDelete._id)} onClose={()=>setConfirmDelete(null)} T={T}/>}
     </div>
   );
 }
@@ -1050,21 +1073,19 @@ function Dashboard({config,role,onBack,theme,onThemeChange}){
 // ══════════════════════════════════════════════════════════════════════════════
 // ADMIN MENU + ROOT APP
 // ══════════════════════════════════════════════════════════════════════════════
-function AdminMenu({config,onSelect,onBack,theme,onThemeChange,T}){
-  const [showSettings,setShowSettings]=useState(false);
+function AdminMenu({config,onSelect,onBack,theme,onThemeToggle,T}){
   const hasConfig=!!config;
   const menuItems=[
     {key:"players",icon:"👤",label:"Spielerverwaltung",desc:"Spieler erstellen & verwalten",available:true,color:T.blue},
     {key:"planning",icon:"📋",label:"Turnierplanung",desc:"Spieltage, Matches & Spielerzuordnung",available:true,color:T.gold},
-    {key:"game",icon:"⛳",label:"Turnier Durchführung",desc:hasConfig?"Scores eintragen & live verfolgen":"Turnier muss zuerst geplant werden",available:hasConfig,color:T.muted},
+    {key:"game",icon:"⛳",label:"Turnier Durchführung",desc:hasConfig?"Scores eintragen & live verfolgen":"Zuerst Turnier planen",available:hasConfig,color:T.muted},
+    {key:"archive",icon:"📦",label:"Match Archiv",desc:"Abgeschlossene Turniere einsehen",available:true,color:T.faint},
   ];
   return(
     <div style={{minHeight:"100vh",background:T.bg,color:T.cream,fontFamily:"Georgia,serif"}}>
-      {showSettings&&<SettingsPanel T={T} currentTheme={theme} onThemeChange={onThemeChange} onClose={()=>setShowSettings(false)}/>}
-      <Header title="Ryder Cup" subtitle="ADMIN BEREICH" onBack={onBack} backLabel="Login" T={T}
-        rightSlot={<button style={{background:"transparent",border:"none",color:"rgba(255,255,255,0.6)",cursor:"pointer",padding:"4px",display:"flex"}} onClick={()=>setShowSettings(true)}><IconSettings size={20} color="rgba(255,255,255,0.6)"/></button>}/>
+      <Header title="Ryder Cup" subtitle="ADMIN BEREICH" onBack={onBack} backLabel="Login" theme={theme} onThemeToggle={onThemeToggle} T={T}/>
       <div style={{padding:"20px",maxWidth:"480px",margin:"0 auto"}}>
-        <div style={{background:T.elevated,border:`1px solid ${T.gold}44`,borderRadius:"10px",padding:"12px 16px",marginBottom:"24px",display:"flex",alignItems:"center",gap:"10px"}}>
+        <div style={{background:T.elevated,border:`1px solid ${T.gold}44`,borderRadius:"10px",padding:"12px 16px",marginBottom:"20px",display:"flex",alignItems:"center",gap:"10px"}}>
           <span style={{fontSize:"20px"}}>👑</span>
           <div><div style={{fontSize:"12px",fontWeight:"700",color:T.gold}}>Administrator</div><div style={{fontSize:"11px",color:T.muted}}>Vollzugriff auf alle Bereiche</div></div>
           <div style={{marginLeft:"auto",display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"6px",height:"6px",borderRadius:"50%",background:hasConfig?"#4CAF50":"#C9A84C"}}/><div style={{fontSize:"10px",color:T.faint}}>{hasConfig?"Aktiv":"Kein Turnier"}</div></div>
@@ -1072,25 +1093,28 @@ function AdminMenu({config,onSelect,onBack,theme,onThemeChange,T}){
         <div style={{display:"flex",flexDirection:"column",gap:"12px"}}>
           {menuItems.map(item=>(
             <button key={item.key} onClick={()=>item.available&&onSelect(item.key)}
-              style={{width:"100%",background:T.cardBg,border:`2px solid ${item.available?item.color+"55":T.border}`,borderRadius:"14px",padding:"18px 20px",cursor:item.available?"pointer":"not-allowed",textAlign:"left",display:"flex",alignItems:"center",gap:"16px",opacity:item.available?1:0.5}}>
-              <div style={{width:"52px",height:"52px",borderRadius:"14px",background:item.color+"22",border:`1px solid ${item.color}44`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"24px",flexShrink:0}}>{item.icon}</div>
-              <div style={{flex:1}}><div style={{fontSize:"15px",fontWeight:"900",color:item.available?item.color:T.muted,fontFamily:"'Arial Black',sans-serif",letterSpacing:"0.5px"}}>{item.label}</div><div style={{fontSize:"11px",color:T.faint,marginTop:"3px"}}>{item.desc}</div></div>
+              style={{width:"100%",background:T.cardBg,border:`2px solid ${item.available?item.color+"55":T.border}`,borderRadius:"14px",padding:"16px 18px",cursor:item.available?"pointer":"not-allowed",textAlign:"left",display:"flex",alignItems:"center",gap:"14px",opacity:item.available?1:0.5}}>
+              <div style={{width:"48px",height:"48px",borderRadius:"12px",background:item.color+"22",border:`1px solid ${item.color}44`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"22px",flexShrink:0}}>{item.icon}</div>
+              <div style={{flex:1}}><div style={{fontSize:"14px",fontWeight:"900",color:item.available?item.color:T.muted,fontFamily:"'Arial Black',sans-serif"}}>{item.label}</div><div style={{fontSize:"11px",color:T.faint,marginTop:"2px"}}>{item.desc}</div></div>
               <div style={{fontSize:"18px",color:item.available?item.color:T.border,opacity:0.6}}>›</div>
             </button>
           ))}
         </div>
         {hasConfig&&(
-          <div style={{marginTop:"20px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:"10px",padding:"12px 14px"}}>
+          <div style={{marginTop:"18px",background:T.surface,border:`1px solid ${T.border}`,borderRadius:"10px",padding:"12px 14px"}}>
             <div style={{fontSize:"10px",color:T.gold,letterSpacing:"1px",marginBottom:"8px",textTransform:"uppercase"}}>Aktives Turnier</div>
-            <div style={{display:"flex",justifyContent:"space-between",fontSize:"12px"}}>
-              <span style={{color:T.blue}}>🔵 {config.t1Name}</span><span style={{color:T.muted}}>vs</span><span style={{color:T.red}}>🔴 {config.t2Name}</span>
-            </div>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:"12px"}}><span style={{color:T.blue}}>🔵 {config.t1Name}</span><span style={{color:T.muted}}>vs</span><span style={{color:T.red}}>🔴 {config.t2Name}</span></div>
             <div style={{fontSize:"11px",color:T.faint,marginTop:"6px"}}>{config.days?.length||0} Spieltage · {config.days?.reduce((s,d)=>s+d.matches.length,0)||0} Matches</div>
           </div>
         )}
       </div>
     </div>
   );
+}
+
+// ── Viewer Archive access (non-admin sees archive too) ────────────────────────
+function ViewerArchive({onBack,T,theme,onThemeToggle}){
+  return<MatchArchive onBack={onBack} T={T} theme={theme} onThemeToggle={onThemeToggle}/>;
 }
 
 export default function App(){
@@ -1100,8 +1124,12 @@ export default function App(){
   const [role,setRole]=useState(null);
   const [loading,setLoading]=useState(false);
   const [theme,setTheme]=useState(()=>{try{return localStorage.getItem("ryder_theme")||"dark";}catch(e){return"dark";}});
+  // Warn when planning over existing tournament
+  const [showOverwriteWarn,setShowOverwriteWarn]=useState(false);
+  const [pendingNewTournament,setPendingNewTournament]=useState(false);
 
   const changeTheme=t=>{setTheme(t);try{localStorage.setItem("ryder_theme",t);}catch(e){}};
+  const toggleTheme=()=>changeTheme(theme==="dark"?"light":"dark");
   const goToLogin=()=>{setPhase("login");setConfig(null);setRole(null);setAdminSection(null);};
   const goToAdminMenu=()=>setAdminSection(null);
 
@@ -1109,22 +1137,40 @@ export default function App(){
     setRole(r);setLoading(true);
     try{
       const s=await getDoc(doc(db,"tournaments","ryder2024"));
-      if(s.exists()){setConfig(s.data());if(r==="admin")setPhase("adminMenu");else setPhase("game");}
+      if(s.exists()&&s.data()?.phase==="game"){setConfig(s.data());if(r==="admin")setPhase("adminMenu");else setPhase("game");}
       else{if(r==="admin")setPhase("adminMenu");else setPhase("waiting");}
     }catch(e){if(r==="admin")setPhase("adminMenu");else setPhase("waiting");}
     setLoading(false);
   };
 
+  const handleSelectSection=s=>{
+    if(s==="planning"&&config){setShowOverwriteWarn(true);}
+    else setAdminSection(s);
+  };
+
+  const handleEndTournament=async cfg=>{
+    await archiveTournament(cfg);
+    // Clear active tournament
+    await saveTournament({...cfg,phase:"archived"});
+    setConfig(null);setAdminSection(null);
+  };
+
+  const handleNewTournamentConfirmed=async()=>{
+    // Archive current if it exists
+    if(config){await archiveTournament(config);}
+    setShowOverwriteWarn(false);setAdminSection("planning");
+  };
+
   useEffect(()=>{
     const needsLive=(phase==="game")||(phase==="adminMenu"&&adminSection==="game");
     if(!needsLive)return;
-    const u=onSnapshot(doc(db,"tournaments","ryder2024"),s=>{if(s.exists())setConfig(s.data());});
+    const u=onSnapshot(doc(db,"tournaments","ryder2024"),s=>{if(s.exists()&&s.data()?.phase==="game")setConfig(s.data());});
     return()=>u();
   },[phase,adminSection]);
 
   const T=THEMES[theme];
 
-  if(phase==="login")return<Login onLogin={handleLogin}/>;
+  if(phase==="login")return<Login onLogin={handleLogin} theme={theme} onThemeToggle={toggleTheme}/>;
   if(loading)return(
     <div style={{minHeight:"100vh",background:T.bg,color:T.cream,fontFamily:"Georgia,serif",display:"flex",alignItems:"center",justifyContent:"center"}}>
       <div style={{textAlign:"center"}}><div style={{fontSize:"40px",marginBottom:"12px"}}>⛳</div><div style={{color:T.muted,fontSize:"14px",letterSpacing:"2px"}}>Lade...</div></div>
@@ -1132,21 +1178,42 @@ export default function App(){
   );
   if(phase==="waiting")return(
     <div style={{minHeight:"100vh",background:T.bg,color:T.cream,fontFamily:"Georgia,serif"}}>
-      <Header title="Ryder Cup" onBack={goToLogin} backLabel="Login" T={T}/>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"calc(100vh - 70px)",padding:"20px"}}>
+      <Header title="Ryder Cup" onBack={goToLogin} backLabel="Login" theme={theme} onThemeToggle={toggleTheme} T={T}/>
+      <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"calc(100vh - 60px)",padding:"20px",gap:"16px"}}>
         <div style={{textAlign:"center"}}><div style={{fontSize:"40px",marginBottom:"12px"}}>⏳</div><div style={{color:T.gold,fontSize:"16px",fontWeight:"700",marginBottom:"8px"}}>Turnier noch nicht gestartet</div><div style={{color:T.muted,fontSize:"13px",marginBottom:"12px"}}>Der Admin muss zuerst das Turnier einrichten.</div><RoleBadge role={role} T={T}/></div>
+        <button onClick={()=>setPhase("viewerArchive")} style={{padding:"10px 20px",background:"transparent",border:`1px solid ${T.border}`,borderRadius:"8px",color:T.muted,fontSize:"12px",cursor:"pointer",display:"flex",alignItems:"center",gap:"6px"}}>
+          <IconArchive size={14} color={T.muted}/> Match Archiv ansehen
+        </button>
       </div>
     </div>
   );
+  if(phase==="viewerArchive")return<ViewerArchive onBack={()=>setPhase("waiting")} T={T} theme={theme} onThemeToggle={toggleTheme}/>;
+
   if(phase==="adminMenu"){
-    if(!adminSection)return<AdminMenu config={config} onSelect={s=>setAdminSection(s)} onBack={goToLogin} theme={theme} onThemeChange={changeTheme} T={T}/>;
-    if(adminSection==="players")return<PlayerManager onBack={goToAdminMenu} T={T}/>;
-    if(adminSection==="planning")return<TournamentPlanning onStart={cfg=>{setConfig(cfg);setAdminSection("game");}} onBack={goToAdminMenu} T={T}/>;
+    if(showOverwriteWarn)return(
+      <div style={{minHeight:"100vh",background:T.bg,color:T.cream,fontFamily:"Georgia,serif"}}>
+        <Header title="Ryder Cup" T={T} theme={theme} onThemeToggle={toggleTheme}/>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",minHeight:"calc(100vh - 60px)",padding:"20px"}}>
+          <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"16px",padding:"24px 20px",maxWidth:"300px",width:"100%",textAlign:"center"}}>
+            <div style={{fontSize:"32px",marginBottom:"12px"}}>⚠️</div>
+            <div style={{fontSize:"15px",fontWeight:"700",color:T.cream,marginBottom:"8px"}}>Aktives Turnier vorhanden!</div>
+            <div style={{fontSize:"12px",color:T.muted,marginBottom:"20px"}}>Das laufende Turnier <strong style={{color:T.gold}}>{config?.t1Name} vs {config?.t2Name}</strong> wird zuerst archiviert, bevor ein neues geplant werden kann.</div>
+            <button style={{width:"100%",padding:"11px",background:`linear-gradient(135deg,${T.gold},#A07830)`,border:"none",borderRadius:"8px",color:"#0D2B1A",fontSize:"13px",fontWeight:"700",cursor:"pointer",marginBottom:"8px"}} onClick={handleNewTournamentConfirmed}>Archivieren & Neu planen</button>
+            <button style={{width:"100%",padding:"11px",background:"transparent",border:`1px solid ${T.border}`,borderRadius:"8px",color:T.muted,fontSize:"13px",cursor:"pointer"}} onClick={()=>setShowOverwriteWarn(false)}>Abbrechen</button>
+          </div>
+        </div>
+      </div>
+    );
+    if(!adminSection)return<AdminMenu config={config} onSelect={handleSelectSection} onBack={goToLogin} theme={theme} onThemeToggle={toggleTheme} T={T}/>;
+    if(adminSection==="players")return<PlayerManager onBack={goToAdminMenu} T={T} theme={theme} onThemeToggle={toggleTheme}/>;
+    if(adminSection==="planning")return<TournamentPlanning onStart={cfg=>{setConfig(cfg);setAdminSection("game");}} onBack={goToAdminMenu} T={T} theme={theme} onThemeToggle={toggleTheme}/>;
+    if(adminSection==="archive")return<MatchArchive onBack={goToAdminMenu} T={T} theme={theme} onThemeToggle={toggleTheme}/>;
     if(adminSection==="game"){
-      if(!config)return<AdminMenu config={config} onSelect={s=>setAdminSection(s)} onBack={goToLogin} theme={theme} onThemeChange={changeTheme} T={T}/>;
-      return<Dashboard config={config} role="admin" onBack={goToAdminMenu} theme={theme} onThemeChange={changeTheme}/>;
+      if(!config)return<AdminMenu config={config} onSelect={handleSelectSection} onBack={goToLogin} theme={theme} onThemeToggle={toggleTheme} T={T}/>;
+      return<Dashboard config={config} role="admin" onBack={goToAdminMenu} onEndTournament={handleEndTournament} theme={theme} onThemeToggle={toggleTheme}/>;
     }
   }
+
   if(!config)return null;
-  return<Dashboard config={config} role={role} onBack={goToLogin} theme={theme} onThemeChange={changeTheme}/>;
+  return<Dashboard config={config} role={role} onBack={goToLogin} onEndTournament={()=>{}} theme={theme} onThemeToggle={toggleTheme}/>;
 }

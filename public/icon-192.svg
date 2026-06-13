@@ -1,7 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192">
-  <rect width="192" height="192" rx="40" fill="#0A1628"/>
-  <text x="28" y="148" font-family="Georgia,'Times New Roman',serif" font-size="130" font-weight="700" fill="#C9A96E">P</text>
-  <line x1="138" y1="28" x2="138" y2="100" stroke="#C9A96E" stroke-width="8" stroke-linecap="round"/>
-  <path d="M138 28 L168 42 L138 56 Z" fill="#C9A96E"/>
-  <line x1="122" y1="100" x2="154" y2="100" stroke="#C9A96E" stroke-width="8" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="96" fill="#0D2B1A"/>
+  <rect width="512" height="512" rx="96" fill="url(#bg)"/>
+  <defs>
+    <radialGradient id="bg" cx="40%" cy="35%" r="70%">
+      <stop offset="0%" stop-color="#1A4D2E"/>
+      <stop offset="100%" stop-color="#0A1F12"/>
+    </radialGradient>
+  </defs>
+  <!-- flagpole -->
+  <rect x="186" y="130" width="10" height="260" rx="5" fill="#C9A84C"/>
+  <!-- flag -->
+  <polygon points="196,130 310,165 196,200" fill="#C9A84C"/>
+  <!-- RC text -->
+  <text x="256" y="435" text-anchor="middle" font-family="Arial Black,sans-serif" font-weight="900" font-size="56" fill="#C9A84C" letter-spacing="6">RC</text>
+  <!-- subtle border -->
+  <rect width="512" height="512" rx="96" fill="none" stroke="#C9A84C" stroke-width="8" stroke-opacity="0.3"/>
 </svg>
