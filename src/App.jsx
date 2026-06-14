@@ -855,26 +855,357 @@ function MatchCard({match,pars,t1Name,t2Name,canEdit,isAdmin,onHoleClick,onReset
   );
 }
 
+// ── Score distribution helper ─────────────────────────────────────────────────
+function calcScoreDistribution(days) {
+  // Returns per-pair: { eagle, birdie, par, bogey, double, worse }
+  const pairDist = {};
+  days.forEach(day => {
+    const course = COURSES[day.courseKey] || Object.values(COURSES)[0];
+    day.matches.forEach(m => {
+      const pairs = [
+        { key: (m.t1Pair||[]).join(" & ") || "?", team: "t1" },
+        { key: (m.t2Pair||[]).join(" & ") || "?", team: "t2" },
+      ];
+      pairs.forEach(({key,team}) => {
+        if (!pairDist[key]) pairDist[key] = { key, team, eagle:0, birdie:0, par:0, bogey:0, double:0, worse:0, total:0 };
+      });
+      m.scores.forEach((sc, hi) => {
+        const par = course.par[hi];
+        const t1s = sc.team1; const t2s = sc.team2;
+        [[t1s, pairs[0].key], [t2s, pairs[1].key]].forEach(([score, key]) => {
+          if (score === null || score === undefined) return;
+          const diff = score - par;
+          const d = pairDist[key];
+          if (!d) return;
+          d.total++;
+          if (diff <= -2) d.eagle++;
+          else if (diff === -1) d.birdie++;
+          else if (diff === 0) d.par++;
+          else if (diff === 1) d.bogey++;
+          else if (diff === 2) d.double++;
+          else d.worse++;
+        });
+      });
+    });
+  });
+  return Object.values(pairDist);
+}
+
+// ── Hole heatmap helper ───────────────────────────────────────────────────────
+function calcHoleHeatmap(days) {
+  const holes = Array.from({length:18}, (_,i) => ({ hole:i+1, t1:0, t2:0, tie:0, total:0 }));
+  days.forEach(day => {
+    const course = COURSES[day.courseKey] || Object.values(COURSES)[0];
+    day.matches.forEach(m => {
+      m.scores.forEach((sc, hi) => {
+        if (sc.team1 === null || sc.team2 === null) return;
+        holes[hi].total++;
+        if (sc.team1 < sc.team2) holes[hi].t1++;
+        else if (sc.team2 < sc.team1) holes[hi].t2++;
+        else holes[hi].tie++;
+      });
+    });
+  });
+  return holes;
+}
+
+// ── Match timeline helper ─────────────────────────────────────────────────────
+function calcMatchTimeline(match, pars) {
+  // Returns array of 18 cumulative diff values (t1 perspective: + = t1 leading)
+  let diff = 0;
+  return match.scores.map((sc, hi) => {
+    if (sc.team1 !== null && sc.team2 !== null) {
+      if (sc.team1 < sc.team2) diff++;
+      else if (sc.team2 < sc.team1) diff--;
+    }
+    return diff;
+  });
+}
+
 function StatsTab({days,t1Name,t2Name,T}){
-  const stats=calcStats(days,t1Name,t2Name);
-  const totalHoles=stats.t1TotalHoles+stats.t2TotalHoles;
-  const t1HolePct=totalHoles>0?Math.round((stats.t1TotalHoles/totalHoles)*100):50;
-  const SectionTitle=({children})=>(<div style={{fontSize:"10px",color:T.gold,letterSpacing:"2px",textTransform:"uppercase",fontWeight:"700",marginBottom:"10px",marginTop:"18px",display:"flex",alignItems:"center",gap:"6px"}}><div style={{flex:1,height:"1px",background:T.border}}/>{children}<div style={{flex:1,height:"1px",background:T.border}}/></div>);
-  const PairRow=({pair,maxPts})=>{const pct=maxPts>0?(pair.pts/maxPts)*100:0;const color=pair.team==="t1"?T.blue:T.red;return(<div style={{marginBottom:"10px"}}><div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"4px"}}><div style={{fontSize:"12px",color:T.cream,fontWeight:"600"}}>{pair.name}</div><div style={{display:"flex",gap:"12px",fontSize:"11px"}}><span style={{color:T.muted}}>{pair.holesWon} Löcher</span><span style={{color,fontWeight:"700"}}>{fmt(pair.pts)} Pts</span></div></div><div style={{height:"6px",background:T.elevated,borderRadius:"3px",overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",background:color,borderRadius:"3px",transition:"width 0.6s"}}/></div></div>);};
-  const maxT1=Math.max(...stats.t1Pairs.map(p=>p.pts),1);const maxT2=Math.max(...stats.t2Pairs.map(p=>p.pts),1);
-  return(<div style={{paddingBottom:"20px"}}>
-    <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"12px"}}>
-      <div style={{fontSize:"11px",color:T.muted,letterSpacing:"1px",marginBottom:"10px",textTransform:"uppercase"}}>Gewonnene Löcher</div>
-      <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:"8px"}}><div><div style={{fontSize:"11px",color:T.blue,fontWeight:"700"}}>🔵 {t1Name}</div><div style={{fontSize:"32px",fontWeight:"900",color:T.blue,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{stats.t1TotalHoles}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:"11px",color:T.red,fontWeight:"700"}}>🔴 {t2Name}</div><div style={{fontSize:"32px",fontWeight:"900",color:T.red,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{stats.t2TotalHoles}</div></div></div>
-      <div style={{height:"12px",borderRadius:"6px",overflow:"hidden",display:"flex"}}><div style={{width:`${t1HolePct}%`,background:T.blue,transition:"width 0.6s"}}/><div style={{flex:1,background:T.red}}/></div>
+  const [activeSection, setActiveSection] = useState(0);
+  const stats = calcStats(days,t1Name,t2Name);
+  const scoreDist = calcScoreDistribution(days);
+  const heatmap = calcHoleHeatmap(days);
+  const totalHoles = stats.t1TotalHoles + stats.t2TotalHoles;
+  const t1HolePct = totalHoles > 0 ? Math.round((stats.t1TotalHoles/totalHoles)*100) : 50;
+
+  const SectionTitle = ({children}) => (
+    <div style={{fontSize:"10px",color:T.gold,letterSpacing:"2px",textTransform:"uppercase",fontWeight:"700",marginBottom:"10px",marginTop:"16px",display:"flex",alignItems:"center",gap:"6px"}}>
+      <div style={{flex:1,height:"1px",background:T.border}}/>{children}<div style={{flex:1,height:"1px",background:T.border}}/>
     </div>
-    <SectionTitle>🔵 {t1Name}</SectionTitle>
-    <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"12px"}}>{stats.t1Pairs.length===0?<div style={{fontSize:"12px",color:T.faint,textAlign:"center"}}>Noch keine Daten</div>:stats.t1Pairs.map((p,i)=><PairRow key={i} pair={p} maxPts={maxT1}/>)}</div>
-    <SectionTitle>🔴 {t2Name}</SectionTitle>
-    <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"12px"}}>{stats.t2Pairs.length===0?<div style={{fontSize:"12px",color:T.faint,textAlign:"center"}}>Noch keine Daten</div>:stats.t2Pairs.map((p,i)=><PairRow key={i} pair={p} maxPts={maxT2}/>)}</div>
-    <SectionTitle>🌟 Top Performer</SectionTitle>
-    <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px"}}>{stats.allPairs.filter(p=>p.pts>0).length===0?<div style={{fontSize:"12px",color:T.faint,textAlign:"center"}}>Noch keine abgeschlossenen Runden</div>:stats.allPairs.filter(p=>p.pts>0).sort((a,b)=>b.pts-a.pts).slice(0,3).map((p,i)=>{const color=p.team==="t1"?T.blue:T.red;return(<div key={i} style={{display:"flex",alignItems:"center",gap:"12px",padding:"10px",background:T.elevated,borderRadius:"8px",marginBottom:"8px",border:`1px solid ${color}33`}}><div style={{fontSize:"20px"}}>{"🥇🥈🥉"[i]}</div><div style={{flex:1}}><div style={{fontSize:"12px",fontWeight:"700",color}}>{p.name}</div><div style={{fontSize:"10px",color:T.faint}}>{p.team==="t1"?t1Name:t2Name} · {p.holesWon} Löcher</div></div><div style={{fontSize:"20px",fontWeight:"900",color,fontFamily:"'Arial Black',sans-serif"}}>{fmt(p.pts)}</div></div>);})}</div>
-  </div>);
+  );
+
+  const PairRow = ({pair,maxPts}) => {
+    const pct = maxPts>0?(pair.pts/maxPts)*100:0;
+    const color = pair.team==="t1"?T.blue:T.red;
+    return(
+      <div style={{marginBottom:"10px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"4px"}}>
+          <div style={{fontSize:"12px",color:T.cream,fontWeight:"600"}}>{pair.name}</div>
+          <div style={{display:"flex",gap:"12px",fontSize:"11px"}}><span style={{color:T.muted}}>{pair.holesWon} Löcher</span><span style={{color,fontWeight:"700"}}>{fmt(pair.pts)} Pts</span></div>
+        </div>
+        <div style={{height:"6px",background:T.elevated,borderRadius:"3px",overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",background:color,borderRadius:"3px",transition:"width 0.6s"}}/></div>
+      </div>
+    );
+  };
+
+  const maxT1 = Math.max(...stats.t1Pairs.map(p=>p.pts),1);
+  const maxT2 = Math.max(...stats.t2Pairs.map(p=>p.pts),1);
+
+  // Score distribution bars per pair
+  const ScoreDistCard = ({dist}) => {
+    const color = dist.team==="t1"?T.blue:T.red;
+    const cats = [
+      { key:"eagle", label:"🦅 Eagle", color:"#FFD700" },
+      { key:"birdie", label:"🐦 Birdie", color:"#4CAF50" },
+      { key:"par", label:"⬜ Par", color:T.muted },
+      { key:"bogey", label:"🔴 Bogey", color:"#FF9800" },
+      { key:"double", label:"💀 Doppel", color:"#E05252" },
+      { key:"worse", label:"⛔ +3 oder mehr", color:"#8B0000" },
+    ];
+    const maxVal = Math.max(...cats.map(c=>dist[c.key]),1);
+    return(
+      <div style={{background:T.isDark?"#0A2014":T.elevated,borderRadius:"10px",padding:"12px",marginBottom:"10px",border:`1px solid ${color}33`}}>
+        <div style={{fontSize:"12px",fontWeight:"700",color,marginBottom:"10px"}}>{dist.key}</div>
+        {cats.map(cat=>{
+          const val = dist[cat.key];
+          const pct = (val/maxVal)*100;
+          const pctOfTotal = dist.total>0?Math.round((val/dist.total)*100):0;
+          return(
+            <div key={cat.key} style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"6px"}}>
+              <div style={{width:"90px",fontSize:"10px",color:T.muted,flexShrink:0}}>{cat.label}</div>
+              <div style={{flex:1,height:"14px",background:T.elevated,borderRadius:"7px",overflow:"hidden",border:`1px solid ${T.border}`}}>
+                <div style={{width:`${pct}%`,height:"100%",background:cat.color,borderRadius:"7px",transition:"width 0.6s",opacity:val===0?0.2:1}}/>
+              </div>
+              <div style={{width:"36px",textAlign:"right",fontSize:"11px",fontWeight:"700",color:val>0?cat.color:T.faint}}>{val>0?`${val} (${pctOfTotal}%)`:"-"}</div>
+            </div>
+          );
+        })}
+        {dist.total===0&&<div style={{fontSize:"11px",color:T.faint,textAlign:"center",padding:"8px"}}>Noch keine Scores</div>}
+      </div>
+    );
+  };
+
+  // Hole heatmap
+  const HoleHeatmap = () => {
+    const activeHoles = heatmap.filter(h=>h.total>0);
+    if (activeHoles.length === 0) return <div style={{fontSize:"12px",color:T.faint,textAlign:"center",padding:"20px"}}>Noch keine Scores eingetragen</div>;
+    return(
+      <div>
+        <div style={{display:"flex",gap:"8px",marginBottom:"10px",fontSize:"10px",color:T.muted,justifyContent:"center"}}>
+          <span style={{display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"12px",height:"12px",borderRadius:"2px",background:T.blue}}/> {t1Name}</span>
+          <span style={{display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"12px",height:"12px",borderRadius:"2px",background:"#888"}}/> Unentschieden</span>
+          <span style={{display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"12px",height:"12px",borderRadius:"2px",background:T.red}}/> {t2Name}</span>
+        </div>
+        {[0,1].map(row=>(
+          <div key={row} style={{display:"grid",gridTemplateColumns:"repeat(9,1fr)",gap:"4px",marginBottom:"4px"}}>
+            {heatmap.slice(row*9, row*9+9).map((h,i)=>{
+              const hi = row*9+i;
+              let bg = T.elevated; let txt = T.faint; let intensity = 0;
+              if (h.total > 0) {
+                const t1pct = h.t1/h.total; const t2pct = h.t2/h.total;
+                intensity = Math.max(t1pct, t2pct);
+                if (h.t1 > h.t2) { bg = T.blue; txt = "#fff"; }
+                else if (h.t2 > h.t1) { bg = T.red; txt = "#fff"; }
+                else { bg = "#666"; txt = "#fff"; }
+              }
+              return(
+                <div key={hi} style={{borderRadius:"6px",padding:"4px 2px",background:bg,opacity:h.total===0?0.25:0.4+intensity*0.6,textAlign:"center",minHeight:"40px",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",transition:"opacity 0.3s"}}>
+                  <div style={{fontSize:"9px",color:txt,fontWeight:"700",opacity:0.8}}>L{hi+1}</div>
+                  {h.total>0&&(
+                    <>
+                      <div style={{fontSize:"11px",color:txt,fontWeight:"900",lineHeight:1}}>{h.t1>h.t2?h.t1:h.t2>h.t1?h.t2:h.tie}</div>
+                      <div style={{fontSize:"8px",color:txt,opacity:0.7}}>/{h.total}</div>
+                    </>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ))}
+        <div style={{fontSize:"10px",color:T.faint,textAlign:"center",marginTop:"8px"}}>Farbe = dominierendes Team · Intensität = Dominanz</div>
+      </div>
+    );
+  };
+
+  // Match timeline
+  const MatchTimelines = () => {
+    const allMatches = [];
+    days.forEach(day => {
+      const course = COURSES[day.courseKey]||Object.values(COURSES)[0];
+      day.matches.forEach(m => {
+        const timeline = calcMatchTimeline(m, course.par);
+        const hasData = m.scores.some(s=>s.team1!==null);
+        if (hasData) allMatches.push({match:m, timeline, day});
+      });
+    });
+    if (allMatches.length===0) return <div style={{fontSize:"12px",color:T.faint,textAlign:"center",padding:"20px"}}>Noch keine Scores eingetragen</div>;
+    return(
+      <div>
+        {allMatches.map(({match,timeline,day},idx)=>{
+          const played = match.scores.filter(s=>s.team1!==null).length;
+          const lastDiff = timeline[played-1]||0;
+          const maxAbs = Math.max(...timeline.map(Math.abs),1);
+          const W=280; const H=60; const pad=8;
+          const xStep=(W-pad*2)/17;
+          const yMid=H/2;
+          const yScale=(H/2-pad)/Math.max(maxAbs,2);
+          const points=timeline.slice(0,played).map((v,i)=>`${pad+i*xStep},${yMid-v*yScale}`).join(" ");
+          const lineColor=lastDiff>0?T.blue:lastDiff<0?T.red:T.muted;
+          return(
+            <div key={idx} style={{background:T.isDark?"#0A2014":T.elevated,borderRadius:"10px",padding:"12px",marginBottom:"10px",border:`1px solid ${T.border}`}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}>
+                <div>
+                  <div style={{fontSize:"12px",fontWeight:"700",color:T.cream}}>{match.name} <span style={{fontSize:"10px",color:T.faint}}>· {day.label}</span></div>
+                  <div style={{fontSize:"10px",color:T.blue}}>{(match.t1Pair||[]).join(" & ")} <span style={{color:T.muted}}>vs</span> <span style={{color:T.red}}>{(match.t2Pair||[]).join(" & ")}</span></div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:"16px",fontWeight:"900",color:lineColor,fontFamily:"'Arial Black',sans-serif"}}>{lastDiff===0?"AS":lastDiff>0?`${lastDiff} UP`:`${Math.abs(lastDiff)} UP`}</div>
+                  <div style={{fontSize:"9px",color:T.faint}}>{lastDiff>0?t1Name:lastDiff<0?t2Name:"Gleich"}</div>
+                </div>
+              </div>
+              <div style={{overflowX:"auto"}}>
+                <svg width={W} height={H} style={{display:"block",margin:"0 auto"}}>
+                  {/* Zero line */}
+                  <line x1={pad} y1={yMid} x2={W-pad} y2={yMid} stroke={T.border} strokeWidth="1" strokeDasharray="3,3"/>
+                  {/* Round divider at hole 9 */}
+                  <line x1={pad+8*xStep} y1={pad} x2={pad+8*xStep} y2={H-pad} stroke={T.border} strokeWidth="1" strokeDasharray="2,4" opacity="0.5"/>
+                  {/* Fill under the line */}
+                  {played>1&&(
+                    <polygon
+                      points={`${pad},${yMid} ${points} ${pad+(played-1)*xStep},${yMid}`}
+                      fill={lineColor} opacity="0.15"/>
+                  )}
+                  {/* Line */}
+                  {played>1&&<polyline points={points} fill="none" stroke={lineColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>}
+                  {/* Current dot */}
+                  {played>0&&<circle cx={pad+(played-1)*xStep} cy={yMid-lastDiff*yScale} r="4" fill={lineColor}/>}
+                  {/* Hole labels */}
+                  {[0,8,17].map(i=>(
+                    <text key={i} x={pad+i*xStep} y={H-1} fontSize="7" fill={T.faint} textAnchor="middle">L{i+1}</text>
+                  ))}
+                  {/* +/- labels */}
+                  <text x={pad-4} y={yMid-yScale*2+3} fontSize="7" fill={T.blue} textAnchor="end">+2</text>
+                  <text x={pad-4} y={yMid+yScale*2+3} fontSize="7" fill={T.red} textAnchor="end">-2</text>
+                </svg>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:"9px",color:T.faint,marginTop:"4px",paddingTop:"4px",borderTop:`1px solid ${T.border}`}}>
+                <span>{played}/18 Löcher gespielt</span>
+                <span>R1: {pad} · R2: 10–18</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+  const sections = ["Übersicht","Scores","Heatmap","Verlauf"];
+
+  return(
+    <div style={{paddingBottom:"20px"}}>
+      {/* Section tabs */}
+      <div style={{display:"flex",gap:"6px",marginBottom:"16px",overflowX:"auto",paddingBottom:"2px"}}>
+        {sections.map((s,i)=>(
+          <button key={i} onClick={()=>setActiveSection(i)}
+            style={{padding:"7px 14px",borderRadius:"20px",border:`1px solid ${activeSection===i?T.gold:T.border}`,background:activeSection===i?T.gold+"22":"transparent",color:activeSection===i?T.gold:T.muted,fontSize:"11px",fontWeight:activeSection===i?"700":"400",cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
+            {["📊","🎯","🗺️","📈"][i]} {s}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Overview ── */}
+      {activeSection===0&&(
+        <>
+          <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"12px"}}>
+            <div style={{fontSize:"11px",color:T.muted,letterSpacing:"1px",marginBottom:"10px",textTransform:"uppercase"}}>Gewonnene Löcher</div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:"8px"}}>
+              <div><div style={{fontSize:"11px",color:T.blue,fontWeight:"700"}}>🔵 {t1Name}</div><div style={{fontSize:"32px",fontWeight:"900",color:T.blue,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{stats.t1TotalHoles}</div></div>
+              <div style={{textAlign:"right"}}><div style={{fontSize:"11px",color:T.red,fontWeight:"700"}}>🔴 {t2Name}</div><div style={{fontSize:"32px",fontWeight:"900",color:T.red,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{stats.t2TotalHoles}</div></div>
+            </div>
+            <div style={{height:"12px",borderRadius:"6px",overflow:"hidden",display:"flex"}}><div style={{width:`${t1HolePct}%`,background:T.blue,transition:"width 0.6s"}}/><div style={{flex:1,background:T.red}}/></div>
+          </div>
+          <SectionTitle>🔵 {t1Name}</SectionTitle>
+          <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"12px"}}>
+            {stats.t1Pairs.length===0?<div style={{fontSize:"12px",color:T.faint,textAlign:"center"}}>Noch keine Daten</div>:stats.t1Pairs.map((p,i)=><PairRow key={i} pair={p} maxPts={maxT1}/>)}
+          </div>
+          <SectionTitle>🔴 {t2Name}</SectionTitle>
+          <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"12px"}}>
+            {stats.t2Pairs.length===0?<div style={{fontSize:"12px",color:T.faint,textAlign:"center"}}>Noch keine Daten</div>:stats.t2Pairs.map((p,i)=><PairRow key={i} pair={p} maxPts={maxT2}/>)}
+          </div>
+          <SectionTitle>🌟 Top Performer</SectionTitle>
+          <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px"}}>
+            {stats.allPairs.filter(p=>p.pts>0).length===0?<div style={{fontSize:"12px",color:T.faint,textAlign:"center"}}>Noch keine abgeschlossenen Runden</div>:
+              stats.allPairs.filter(p=>p.pts>0).sort((a,b)=>b.pts-a.pts).slice(0,3).map((p,i)=>{
+                const color=p.team==="t1"?T.blue:T.red;
+                return(<div key={i} style={{display:"flex",alignItems:"center",gap:"12px",padding:"10px",background:T.elevated,borderRadius:"8px",marginBottom:"8px",border:`1px solid ${color}33`}}>
+                  <div style={{fontSize:"20px"}}>{"🥇🥈🥉"[i]}</div>
+                  <div style={{flex:1}}><div style={{fontSize:"12px",fontWeight:"700",color}}>{p.name}</div><div style={{fontSize:"10px",color:T.faint}}>{p.team==="t1"?t1Name:t2Name} · {p.holesWon} Löcher</div></div>
+                  <div style={{fontSize:"20px",fontWeight:"900",color,fontFamily:"'Arial Black',sans-serif"}}>{fmt(p.pts)}</div>
+                </div>);
+              })}
+          </div>
+        </>
+      )}
+
+      {/* ── Score Distribution ── */}
+      {activeSection===1&&(
+        <>
+          <div style={{background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"14px",fontSize:"11px",color:T.muted}}>
+            🎯 Score-Verteilung pro Pair — relativ zu Par
+          </div>
+          {scoreDist.length===0&&<div style={{fontSize:"12px",color:T.faint,textAlign:"center",padding:"30px"}}>Noch keine Scores</div>}
+          {scoreDist.filter(d=>d.team==="t1").length>0&&<div style={{fontSize:"10px",color:T.blue,letterSpacing:"2px",fontWeight:"700",marginBottom:"8px"}}>🔵 {t1Name}</div>}
+          {scoreDist.filter(d=>d.team==="t1").map((d,i)=><ScoreDistCard key={i} dist={d}/>)}
+          {scoreDist.filter(d=>d.team==="t2").length>0&&<div style={{fontSize:"10px",color:T.red,letterSpacing:"2px",fontWeight:"700",marginBottom:"8px",marginTop:"12px"}}>🔴 {t2Name}</div>}
+          {scoreDist.filter(d=>d.team==="t2").map((d,i)=><ScoreDistCard key={i} dist={d}/>)}
+        </>
+      )}
+
+      {/* ── Hole Heatmap ── */}
+      {activeSection===2&&(
+        <>
+          <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px"}}>
+            <div style={{fontSize:"11px",color:T.muted,letterSpacing:"1px",marginBottom:"14px",textTransform:"uppercase"}}>Loch-Heatmap – Wer dominiert welches Loch?</div>
+            <HoleHeatmap/>
+          </div>
+          {/* Best/worst holes summary */}
+          {heatmap.filter(h=>h.total>0).length>0&&(
+            <>
+              <SectionTitle>💪 Stärkste Löcher</SectionTitle>
+              <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px"}}>
+                {[...heatmap].filter(h=>h.total>0).sort((a,b)=>{
+                  const aEdge=Math.abs(a.t1-a.t2)/a.total;const bEdge=Math.abs(b.t1-b.t2)/b.total;return bEdge-aEdge;
+                }).slice(0,5).map((h,i)=>{
+                  const winner=h.t1>h.t2?t1Name:h.t2>h.t1?t2Name:null;
+                  const color=h.t1>h.t2?T.blue:h.t2>h.t1?T.red:T.muted;
+                  const pct=Math.round(Math.max(h.t1,h.t2)/h.total*100);
+                  return(
+                    <div key={i} style={{display:"flex",alignItems:"center",gap:"10px",padding:"8px 0",borderBottom:i<4?`1px solid ${T.border}`:"none"}}>
+                      <div style={{width:"32px",height:"32px",borderRadius:"8px",background:color+"22",border:`1px solid ${color}44`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:"900",fontSize:"13px",color}}>{h.hole}</div>
+                      <div style={{flex:1}}><div style={{fontSize:"12px",fontWeight:"600",color:winner?color:T.muted}}>{winner||"Ausgeglichen"}</div><div style={{fontSize:"10px",color:T.faint}}>{h.total} gespielt</div></div>
+                      <div style={{fontSize:"14px",fontWeight:"900",color}}>{pct}%</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          )}
+        </>
+      )}
+
+      {/* ── Match Timeline ── */}
+      {activeSection===3&&(
+        <>
+          <div style={{background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"14px",fontSize:"11px",color:T.muted}}>
+            📈 Loch-für-Loch Verlauf jedes Matches — 🔵 oben = {t1Name} führt
+          </div>
+          <MatchTimelines/>
+        </>
+      )}
+    </div>
+  );
 }
 
 function DaySummary({day,t1Name,t2Name,T}){
