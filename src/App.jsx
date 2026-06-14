@@ -419,13 +419,18 @@ function TournamentPlanning({onStart,onBack,T,theme,onThemeToggle}){
   const [selectedIds,setSelectedIds]=useState(new Set());
   const [team1Ids,setTeam1Ids]=useState(new Set());
   const [team2Ids,setTeam2Ids]=useState(new Set());
+  const [captainT1,setCaptainT1]=useState(null);
+  const [captainT2,setCaptainT2]=useState(null);
   const [showAddPlayer,setShowAddPlayer]=useState(false);
   const [newFn,setNewFn]=useState(""); const [newLn,setNewLn]=useState(""); const [newHcp,setNewHcp]=useState(""); const [addingPlayer,setAddingPlayer]=useState(false);
 
   useEffect(()=>{if(!playersLoaded){getDocs(collection(db,"savedPlayers")).then(snap=>{setAllSavedPlayers(snap.docs.map(d=>({id:d.id,...d.data()})));setPlayersLoaded(true);}).catch(()=>setPlayersLoaded(true));}},[playersLoaded]);
 
-  const toggleSelect=id=>{setSelectedIds(prev=>{const next=new Set(prev);if(next.has(id)){next.delete(id);setTeam1Ids(t=>{const n=new Set(t);n.delete(id);return n;});setTeam2Ids(t=>{const n=new Set(t);n.delete(id);return n;});}else next.add(id);return next;});};
-  const assignTeam=(id,team)=>{if(team==="t1"){setTeam1Ids(p=>{const n=new Set(p);n.add(id);return n;});setTeam2Ids(p=>{const n=new Set(p);n.delete(id);return n;});}else{setTeam2Ids(p=>{const n=new Set(p);n.add(id);return n;});setTeam1Ids(p=>{const n=new Set(p);n.delete(id);return n;});}};
+  const allSelected=allSavedPlayers.length>0&&allSavedPlayers.every(p=>selectedIds.has(p.id));
+  const toggleSelectAll=()=>{if(allSelected){setSelectedIds(new Set());setTeam1Ids(new Set());setTeam2Ids(new Set());setCaptainT1(null);setCaptainT2(null);}else{setSelectedIds(new Set(allSavedPlayers.map(p=>p.id)));}};
+  const toggleSelect=id=>{setSelectedIds(prev=>{const next=new Set(prev);if(next.has(id)){next.delete(id);setTeam1Ids(t=>{const n=new Set(t);n.delete(id);return n;});setTeam2Ids(t=>{const n=new Set(t);n.delete(id);return n;});if(captainT1===id)setCaptainT1(null);if(captainT2===id)setCaptainT2(null);}else next.add(id);return next;});};
+  const assignTeam=(id,team)=>{if(team==="t1"){setTeam1Ids(p=>{const n=new Set(p);n.add(id);return n;});setTeam2Ids(p=>{const n=new Set(p);n.delete(id);return n;});if(captainT2===id)setCaptainT2(null);}else{setTeam2Ids(p=>{const n=new Set(p);n.add(id);return n;});setTeam1Ids(p=>{const n=new Set(p);n.delete(id);return n;});if(captainT1===id)setCaptainT1(null);}};
+  const toggleCaptain=(id,team)=>{if(team==="t1"){setCaptainT1(prev=>prev===id?null:id);}else{setCaptainT2(prev=>prev===id?null:id);}};
   const addNewPlayer=async()=>{
     if(!newFn.trim()||!newLn.trim())return;setAddingPlayer(true);
     const id="p"+Date.now();const data={fn:newFn.trim(),ln:newLn.trim(),hcp:newHcp||"",photo:null};
@@ -507,7 +512,7 @@ function TournamentPlanning({onStart,onBack,T,theme,onThemeToggle}){
       });
       return{id:di,label:`Tag ${di+1} – ${COURSES[ds.courseKey]?.shortName||ds.courseKey}`,courseKey:ds.courseKey,mode,matches};
     });
-    const config={t1Name,t2Name,matchFormat,t1Players:t1Players.map(p=>({id:p.id,fn:p.fn,ln:p.ln,hcp:p.hcp,photo:p.photo||null})),t2Players:t2Players.map(p=>({id:p.id,fn:p.fn,ln:p.ln,hcp:p.hcp,photo:p.photo||null})),days,phase:"game",startedAt:Date.now()};
+    const config={t1Name,t2Name,matchFormat,captainT1,captainT2,t1Players:t1Players.map(p=>({id:p.id,fn:p.fn,ln:p.ln,hcp:p.hcp,photo:p.photo||null,isCapt:p.id===captainT1})),t2Players:t2Players.map(p=>({id:p.id,fn:p.fn,ln:p.ln,hcp:p.hcp,photo:p.photo||null,isCapt:p.id===captainT2})),days,phase:"game",startedAt:Date.now()};
     await saveTournament(config);setSaving(false);onStart(config);
   };
 
@@ -587,20 +592,28 @@ function TournamentPlanning({onStart,onBack,T,theme,onThemeToggle}){
         {/* ── TAB 1 ── */}
         {tab===1&&(
           <>
-            <div style={{background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"14px",fontSize:"11px",color:T.muted}}>
-              ✅ Haken = dabei · dann 🔵 oder 🔴 tippen · Format: <span style={{color:T.gold,fontWeight:"700"}}>{matchFormat}</span>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px"}}>
+              <div style={{fontSize:"11px",color:T.muted}}>✅ Haken = dabei · 🔵🔴 Team · 🎖️ Captain</div>
+              <button onClick={toggleSelectAll} style={{padding:"6px 12px",borderRadius:"20px",border:`1px solid ${allSelected?T.gold:T.border}`,background:allSelected?T.gold+"22":"transparent",color:allSelected?T.gold:T.muted,fontSize:"11px",fontWeight:allSelected?"700":"400",cursor:"pointer",whiteSpace:"nowrap"}}>
+                {allSelected?"✓ Alle":"Alle wählen"}
+              </button>
             </div>
             {!playersLoaded&&<div style={{textAlign:"center",padding:"20px",color:T.muted}}>Lade...</div>}
             {playersLoaded&&allSavedPlayers.map(p=>{
               const sel=selectedIds.has(p.id);const inT1=team1Ids.has(p.id);const inT2=team2Ids.has(p.id);
+              const isCapt1=captainT1===p.id;const isCapt2=captainT2===p.id;const isCapt=isCapt1||isCapt2;
               return(
-                <div key={p.id} style={{background:T.cardBg,border:`1px solid ${sel?(inT1?T.blue:inT2?T.red:T.gold):T.border}`,borderRadius:"10px",padding:"10px 12px",marginBottom:"8px",display:"flex",alignItems:"center",gap:"10px"}}>
+                <div key={p.id} style={{background:T.cardBg,border:`1px solid ${isCapt?T.gold:sel?(inT1?T.blue:inT2?T.red:T.gold):T.border}`,borderRadius:"10px",padding:"10px 12px",marginBottom:"8px",display:"flex",alignItems:"center",gap:"8px"}}>
                   <div onClick={()=>toggleSelect(p.id)} style={{width:"26px",height:"26px",borderRadius:"6px",border:`2px solid ${sel?T.gold:T.border}`,background:sel?T.gold+"22":"transparent",display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",flexShrink:0}}>{sel&&<IconCheck size={14} color={T.gold}/>}</div>
-                  <PlayerAvatar name={(p.fn||"")+" "+(p.ln||"")} size={38} color={inT1?T.blue:inT2?T.red:T.muted} photo={p.photo}/>
-                  <div style={{flex:1}}><div style={{fontSize:"13px",fontWeight:"600",color:T.cream}}>{p.fn} {p.ln}</div><div style={{fontSize:"10px",color:T.faint}}>{p.hcp?`HCP ${p.hcp}`:"—"}</div></div>
-                  {sel&&(<div style={{display:"flex",gap:"4px"}}>
-                    <button onClick={()=>assignTeam(p.id,"t1")} style={{padding:"6px 12px",borderRadius:"6px",border:`1px solid ${inT1?T.blue:T.border}`,background:inT1?T.blue+"22":"transparent",color:inT1?T.blue:T.muted,fontSize:"12px",fontWeight:inT1?"700":"400",cursor:"pointer"}}>🔵</button>
-                    <button onClick={()=>assignTeam(p.id,"t2")} style={{padding:"6px 12px",borderRadius:"6px",border:`1px solid ${inT2?T.red:T.border}`,background:inT2?T.red+"22":"transparent",color:inT2?T.red:T.muted,fontSize:"12px",fontWeight:inT2?"700":"400",cursor:"pointer"}}>🔴</button>
+                  <div style={{position:"relative",flexShrink:0}}>
+                    <PlayerAvatar name={(p.fn||"")+" "+(p.ln||"")} size={38} color={inT1?T.blue:inT2?T.red:T.muted} photo={p.photo}/>
+                    {isCapt&&<div style={{position:"absolute",top:"-6px",right:"-6px",fontSize:"13px",lineHeight:1}}>🎖️</div>}
+                  </div>
+                  <div style={{flex:1,minWidth:0}}><div style={{fontSize:"13px",fontWeight:"600",color:T.cream,display:"flex",alignItems:"center",gap:"4px"}}>{p.fn} {p.ln}{isCapt&&<span style={{fontSize:"9px",background:T.gold+"33",color:T.gold,borderRadius:"4px",padding:"1px 5px",fontWeight:"700"}}>CAPTAIN</span>}</div><div style={{fontSize:"10px",color:T.faint}}>{p.hcp?`HCP ${p.hcp}`:"—"}</div></div>
+                  {sel&&(<div style={{display:"flex",gap:"3px",flexShrink:0}}>
+                    <button onClick={()=>assignTeam(p.id,"t1")} style={{padding:"5px 9px",borderRadius:"6px",border:`1px solid ${inT1?T.blue:T.border}`,background:inT1?T.blue+"22":"transparent",color:inT1?T.blue:T.muted,fontSize:"12px",fontWeight:inT1?"700":"400",cursor:"pointer"}}>🔵</button>
+                    <button onClick={()=>assignTeam(p.id,"t2")} style={{padding:"5px 9px",borderRadius:"6px",border:`1px solid ${inT2?T.red:T.border}`,background:inT2?T.red+"22":"transparent",color:inT2?T.red:T.muted,fontSize:"12px",fontWeight:inT2?"700":"400",cursor:"pointer"}}>🔴</button>
+                    {(inT1||inT2)&&<button onClick={()=>toggleCaptain(p.id,inT1?"t1":"t2")} title="Captain" style={{padding:"5px 8px",borderRadius:"6px",border:`1px solid ${isCapt?T.gold:T.border}`,background:isCapt?T.gold+"22":"transparent",color:isCapt?T.gold:T.faint,fontSize:"12px",cursor:"pointer"}}>🎖️</button>}
                   </div>)}
                 </div>
               );
@@ -733,6 +746,165 @@ function TournamentPlanning({onStart,onBack,T,theme,onThemeToggle}){
             {!allMatchesFilled&&<div style={{fontSize:"11px",color:T.faint,textAlign:"center",marginTop:"8px"}}>Alle Match-Slots müssen befüllt sein</div>}
           </>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PAIRING EDITOR  – admin can change match pairings after tournament start
+// ══════════════════════════════════════════════════════════════════════════════
+function PairingEditor({config,dayIdx,onSave,onClose,T}){
+  const day=config.days[dayIdx];
+  const allPlayers=[...(config.t1Players||[]),...(config.t2Players||[])];
+  const t1Ids=new Set((config.t1Players||[]).map(p=>p.id));
+  const t2Ids=new Set((config.t2Players||[]).map(p=>p.id));
+  const matchFormat=config.matchFormat||"1v1";
+  const playersPerSlot=matchFormat==="2v2"?2:1;
+
+  // Build initial assignment from current day matches
+  const [matchAssign,setMatchAssign]=useState(()=>
+    day.matches.map(m=>({
+      t1Players:[...(m.t1PlayerIds||[])],
+      t2Players:[...(m.t2PlayerIds||[])],
+    }))
+  );
+  const [pickingSlot,setPickingSlot]=useState(null);
+  const [saving,setSaving]=useState(false);
+
+  const usedIds=()=>{const s=new Set();matchAssign.forEach(ma=>{ma.t1Players.forEach(id=>{if(id)s.add(id);});ma.t2Players.forEach(id=>{if(id)s.add(id);});});return s;};
+
+  const assignPlayer=playerId=>{
+    if(!pickingSlot)return;
+    const{matchIdx,team,slotIdx}=pickingSlot;
+    setMatchAssign(prev=>{
+      const next=prev.map(ma=>({t1Players:[...ma.t1Players],t2Players:[...ma.t2Players]}));
+      // remove from other matches
+      next.forEach((ma,mi)=>{if(mi!==matchIdx){ma.t1Players=ma.t1Players.map(id=>id===playerId?undefined:id);ma.t2Players=ma.t2Players.map(id=>id===playerId?undefined:id);}});
+      const arr=team==="t1"?next[matchIdx].t1Players:next[matchIdx].t2Players;
+      arr[slotIdx]=playerId;
+      return next;
+    });
+    setPickingSlot(null);
+  };
+
+  const clearSlot=(matchIdx,team,slotIdx)=>{
+    setMatchAssign(prev=>{const next=prev.map(ma=>({t1Players:[...ma.t1Players],t2Players:[...ma.t2Players]}));const arr=team==="t1"?next[matchIdx].t1Players:next[matchIdx].t2Players;arr[slotIdx]=undefined;return next;});
+  };
+
+  const allFilled=matchAssign.every(ma=>{
+    for(let i=0;i<playersPerSlot;i++){if(!ma.t1Players[i]||!ma.t2Players[i])return false;}return true;
+  });
+
+  const handleSave=async()=>{
+    setSaving(true);
+    const playerMap={};allPlayers.forEach(p=>{playerMap[p.id]=p;});
+    const newMatches=day.matches.map((m,mi)=>{
+      const ma=matchAssign[mi];
+      const p1a=playerMap[ma.t1Players[0]];const p1b=playerMap[ma.t1Players[1]];
+      const p2a=playerMap[ma.t2Players[0]];const p2b=playerMap[ma.t2Players[1]];
+      const t1Pair=[p1a?`${p1a.fn} ${p1a.ln}`:"?",p1b?`${p1b.fn} ${p1b.ln}`:null].filter(Boolean);
+      const t2Pair=[p2a?`${p2a.fn} ${p2a.ln}`:"?",p2b?`${p2b.fn} ${p2b.ln}`:null].filter(Boolean);
+      const t1Photos={};ma.t1Players.forEach(id=>{if(id)t1Photos[id]=playerMap[id]?.photo||null;});
+      const t2Photos={};ma.t2Players.forEach(id=>{if(id)t2Photos[id]=playerMap[id]?.photo||null;});
+      return{...m,t1Pair,t2Pair,t1PlayerIds:ma.t1Players.filter(Boolean),t2PlayerIds:ma.t2Players.filter(Boolean),t1Photos,t2Photos,
+        teamHcp1:p1a?parseFloat(p1a.hcp||0):null,teamHcp2:p2a?parseFloat(p2a.hcp||0):null,
+        scores:emptyScores()}; // reset scores for this day
+    });
+    const newDays=config.days.map((d,di)=>di===dayIdx?{...d,matches:newMatches}:d);
+    await saveTournament({...config,days:newDays});
+    setSaving(false);onSave({...config,days:newDays});
+  };
+
+  const color=s=>s==="t1"?T.blue:T.red;
+  const teamName=s=>s==="t1"?config.t1Name:config.t2Name;
+  const teamPlayers=s=>allPlayers.filter(p=>s==="t1"?t1Ids.has(p.id):t2Ids.has(p.id));
+
+  return(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",zIndex:200,display:"flex",flexDirection:"column"}}>
+      <div style={{background:T.bg,flex:1,overflowY:"auto",maxWidth:"480px",width:"100%",margin:"0 auto",display:"flex",flexDirection:"column"}}>
+        <div style={{background:T.headerBg,borderBottom:`2px solid ${T.gold}`,padding:"0 14px",height:"60px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:5}}>
+          <button onClick={onClose} style={{background:"transparent",border:`1px solid rgba(255,255,255,0.2)`,borderRadius:"6px",color:"rgba(255,255,255,0.7)",fontSize:"11px",padding:"5px 8px",cursor:"pointer",display:"flex",alignItems:"center",gap:"3px"}}>
+            <IconBack size={11} color="rgba(255,255,255,0.7)"/>Abbrechen
+          </button>
+          <div style={{fontSize:"14px",fontWeight:"900",color:T.gold,fontFamily:"'Arial Black',sans-serif"}}>⛳ Paarings ändern</div>
+          <div style={{width:"70px"}}/>
+        </div>
+        <div style={{padding:"14px",flex:1}}>
+          <div style={{background:"#E0820022",border:"1px solid #E08200",borderRadius:"8px",padding:"10px 14px",marginBottom:"14px",fontSize:"11px",color:"#E08200"}}>
+            ⚠️ Scores von Tag {dayIdx+1} werden zurückgesetzt wenn du speicherst.
+          </div>
+          {pickingSlot?(
+            <div style={{background:T.gold+"22",border:`1px solid ${T.gold}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"12px",display:"flex",alignItems:"center",gap:"10px"}}>
+              <div>{pickingSlot.team==="t1"?"🔵":"🔴"}</div>
+              <div style={{flex:1}}><div style={{fontSize:"12px",fontWeight:"700",color:T.gold}}>Match {pickingSlot.matchIdx+1} · Slot {pickingSlot.slotIdx+1} · {teamName(pickingSlot.team)}</div><div style={{fontSize:"10px",color:T.muted}}>Spieler unten antippen</div></div>
+              <button onClick={()=>setPickingSlot(null)} style={{background:"transparent",border:"none",color:T.muted,fontSize:"22px",cursor:"pointer"}}>×</button>
+            </div>
+          ):(
+            <div style={{background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"12px",fontSize:"11px",color:T.muted}}>
+              💡 Tippe einen Spieler-Slot um ihn zu ändern
+            </div>
+          )}
+
+          {pickingSlot&&(()=>{
+            const used=usedIds();
+            const curArr=pickingSlot.team==="t1"?matchAssign[pickingSlot.matchIdx].t1Players:matchAssign[pickingSlot.matchIdx].t2Players;
+            const curId=curArr[pickingSlot.slotIdx];
+            const c=color(pickingSlot.team);
+            return(
+              <div style={{background:T.cardBg,border:`1px solid ${c}55`,borderRadius:"10px",padding:"10px",marginBottom:"14px"}}>
+                {teamPlayers(pickingSlot.team).map(p=>{
+                  const isUsed=used.has(p.id)&&p.id!==curId;const isCur=p.id===curId;
+                  return(
+                    <button key={p.id} disabled={isUsed} onClick={()=>assignPlayer(p.id)}
+                      style={{width:"100%",padding:"9px 12px",marginBottom:"5px",borderRadius:"8px",border:`1px solid ${isCur?c:T.border}`,background:isCur?c+"22":"transparent",cursor:isUsed?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:"10px",opacity:isUsed?0.4:1}}>
+                      <PlayerAvatar name={(p.fn||"")+" "+(p.ln||"")} size={30} color={isCur?c:T.muted} photo={p.photo}/>
+                      <div style={{flex:1,textAlign:"left"}}><div style={{fontSize:"13px",color:isCur?c:T.cream,fontWeight:isCur?"700":"400"}}>{p.fn} {p.ln}</div><div style={{fontSize:"10px",color:T.faint}}>{isUsed?"Bereits eingeteilt":p.hcp?`HCP ${p.hcp}`:"—"}</div></div>
+                      {isCur&&<IconCheck size={15} color={c}/>}
+                    </button>
+                  );
+                })}
+              </div>
+            );
+          })()}
+
+          {day.matches.map((m,mi)=>(
+            <div key={mi} style={{background:T.cardBg,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"12px 14px",marginBottom:"10px"}}>
+              <div style={{fontSize:"13px",fontWeight:"900",color:T.gold,marginBottom:"10px"}}>Match {mi+1}</div>
+              <div style={{display:"flex",gap:"8px"}}>
+                {(["t1","t2"]).map(team=>(
+                  <div key={team} style={{flex:1}}>
+                    <div style={{fontSize:"9px",color:color(team),letterSpacing:"1px",marginBottom:"5px",fontWeight:"700"}}>{teamName(team)}</div>
+                    {Array.from({length:playersPerSlot},(_,si)=>{
+                      const pid=(team==="t1"?matchAssign[mi].t1Players:matchAssign[mi].t2Players)[si];
+                      const player=allPlayers.find(p=>p.id===pid);
+                      const isActive=pickingSlot?.matchIdx===mi&&pickingSlot?.team===team&&pickingSlot?.slotIdx===si;
+                      const c=color(team);
+                      return(
+                        <button key={si} onClick={()=>{if(isActive)setPickingSlot(null);else{setPickingSlot({matchIdx:mi,team,slotIdx:si});window.scrollTo({top:0,behavior:"smooth"});}}}
+                          style={{width:"100%",padding:"8px",borderRadius:"8px",border:`2px solid ${isActive?c:player?c+"55":T.border}`,background:isActive?c+"22":player?c+"11":T.isDark?"#0A2014":T.elevated,cursor:"pointer",display:"flex",alignItems:"center",gap:"6px",minHeight:"44px",marginBottom:si<playersPerSlot-1?"5px":"0"}}>
+                          {player?(<>
+                            <PlayerAvatar name={(player.fn||"")+" "+(player.ln||"")} size={26} color={c} photo={player.photo}/>
+                            <div style={{flex:1,textAlign:"left"}}><div style={{fontSize:"11px",color:c,fontWeight:"700"}}>{player.fn} {player.ln}</div></div>
+                            <span onClick={e=>{e.stopPropagation();clearSlot(mi,team,si);}} style={{color:T.faint,fontSize:"16px",cursor:"pointer",padding:"2px"}}>×</span>
+                          </>):(
+                            <div style={{flex:1,textAlign:"center",fontSize:"11px",color:isActive?c:T.faint}}>{isActive?"↑ Wählen":"+ Spieler"}</div>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+
+          <button disabled={!allFilled||saving} onClick={handleSave}
+            style={{width:"100%",padding:"13px",background:allFilled?`linear-gradient(135deg,${T.gold},#A07830)`:T.elevated,border:"none",borderRadius:"8px",color:allFilled?T.isDark?"#0D2B1A":"white":T.muted,fontSize:"14px",fontWeight:"900",letterSpacing:"2px",textTransform:"uppercase",cursor:allFilled?"pointer":"not-allowed",opacity:allFilled?1:0.5}}>
+            {saving?"Speichere...":"Paarings speichern ✓"}
+          </button>
+          {!allFilled&&<div style={{fontSize:"11px",color:T.faint,textAlign:"center",marginTop:"8px"}}>Alle Slots müssen befüllt sein</div>}
+        </div>
       </div>
     </div>
   );
@@ -1199,8 +1371,77 @@ function StatsTab({days,t1Name,t2Name,T}){
       {activeSection===3&&(
         <>
           <div style={{background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"14px",fontSize:"11px",color:T.muted}}>
-            📈 Loch-für-Loch Verlauf jedes Matches — 🔵 oben = {t1Name} führt
+            📈 Gesamtverlauf + Einzelmatches — 🔵 oben = {t1Name} führt
           </div>
+
+          {/* Day cumulative chart */}
+          {(()=>{
+            // Collect all matches across all days in order, compute cumulative point diff
+            const points=[];let cumT1=0,cumT2=0;
+            days.forEach((day,di)=>{
+              const course=COURSES[day.courseKey]||Object.values(COURSES)[0];
+              day.matches.forEach((m,mi)=>{
+                [0,1].forEach(r=>{
+                  const rs=calcRoundStatus(m.scores,course.par,r*9,r*9+9);
+                  const pt=getPoints(rs);
+                  if(pt){cumT1+=pt.t1;cumT2+=pt.t2;}
+                  points.push({cumT1,cumT2,label:`T${di+1}M${mi+1}R${r+1}`,done:pt!==null});
+                });
+              });
+            });
+            const played=points.filter(p=>p.done);
+            if(played.length<2)return<div style={{background:T.cardBg,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"20px",textAlign:"center",marginBottom:"14px",fontSize:"12px",color:T.faint}}>Noch keine abgeschlossenen Runden für Gesamtverlauf</div>;
+            const W=320;const H=80;const pad=12;const xStep=(W-pad*2)/Math.max(played.length-1,1);
+            const maxVal=Math.max(...played.map(p=>Math.max(p.cumT1,p.cumT2)),1);
+            const yScale=(H-pad*2)/maxVal;
+            const t1pts=played.map((p,i)=>[`${pad+i*xStep}`,`${H-pad-p.cumT1*yScale}`].join(",")).join(" ");
+            const t2pts=played.map((p,i)=>[`${pad+i*xStep}`,`${H-pad-p.cumT2*yScale}`].join(",")).join(" ");
+            const last=played[played.length-1];
+            const diff=last.cumT1-last.cumT2;
+            return(
+              <div style={{background:T.cardBg,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"14px"}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"12px"}}>
+                  <div style={{fontSize:"12px",fontWeight:"700",color:T.cream}}>Gesamtverlauf · alle Tage</div>
+                  <div style={{textAlign:"right"}}>
+                    <span style={{color:T.blue,fontWeight:"900",fontSize:"16px"}}>{fmt(last.cumT1)}</span>
+                    <span style={{color:T.muted,fontSize:"12px"}}> : </span>
+                    <span style={{color:T.red,fontWeight:"900",fontSize:"16px"}}>{fmt(last.cumT2)}</span>
+                  </div>
+                </div>
+                <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{display:"block"}}>
+                  {/* grid lines */}
+                  {[0.25,0.5,0.75,1].map(f=>(
+                    <line key={f} x1={pad} y1={H-pad-f*maxVal*yScale} x2={W-pad} y2={H-pad-f*maxVal*yScale} stroke={T.border} strokeWidth="0.5" strokeDasharray="3,4"/>
+                  ))}
+                  {/* day dividers */}
+                  {(()=>{let idx=0;return days.map((day,di)=>{const n=day.matches.length*2;const x=pad+(idx+n-1)*xStep;idx+=n;return di<days.length-1?<line key={di} x1={x} y1={pad} x2={x} y2={H-pad} stroke={T.border} strokeWidth="0.8" strokeDasharray="2,4" opacity="0.6"/>:null;});})()}
+                  {/* t2 area + line */}
+                  <polyline points={t2pts} fill="none" stroke={T.red} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.6"/>
+                  {/* t1 area + line */}
+                  <polyline points={t1pts} fill="none" stroke={T.blue} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
+                  {/* end dots */}
+                  {played.length>0&&<>
+                    <circle cx={pad+(played.length-1)*xStep} cy={H-pad-last.cumT1*yScale} r="4" fill={T.blue}/>
+                    <circle cx={pad+(played.length-1)*xStep} cy={H-pad-last.cumT2*yScale} r="4" fill={T.red}/>
+                  </>}
+                  {/* labels */}
+                  <text x={pad} y={H-1} fontSize="7" fill={T.faint}>Start</text>
+                  {played.length>1&&<text x={pad+(played.length-1)*xStep} y={H-1} fontSize="7" fill={T.faint} textAnchor="end">Jetzt</text>}
+                  {days.map((day,di)=>{
+                    let idx=0;days.slice(0,di).forEach(d=>idx+=d.matches.length*2);
+                    const x=pad+idx*xStep;
+                    return<text key={di} x={x+2} y={pad+8} fontSize="7" fill={T.gold} opacity="0.7">T{di+1}</text>;
+                  })}
+                </svg>
+                <div style={{display:"flex",gap:"12px",justifyContent:"center",marginTop:"8px",fontSize:"10px",color:T.muted}}>
+                  <span style={{display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"16px",height:"2px",background:T.blue,borderRadius:"1px"}}/>{t1Name}</span>
+                  <span style={{display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"16px",height:"2px",background:T.red,borderRadius:"1px",opacity:0.6}}/>{t2Name}</span>
+                </div>
+              </div>
+            );
+          })()}
+
+          <div style={{fontSize:"10px",color:T.gold,letterSpacing:"2px",fontWeight:"700",marginBottom:"10px",display:"flex",alignItems:"center",gap:"6px"}}><div style={{flex:1,height:"1px",background:T.border}}/>EINZELNE MATCHES<div style={{flex:1,height:"1px",background:T.border}}/></div>
           <MatchTimelines/>
         </>
       )}
@@ -1226,6 +1467,7 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
   const [winEvent,setWinEvent]=useState(null);
   const [confetti,setConfetti]=useState(false);
   const [showEndConfirm,setShowEndConfirm]=useState(false);
+  const [pairingDay,setPairingDay]=useState(null); // dayIdx to edit
   const prevRef=useRef(null);
   const isAdmin=role==="admin",isViewer=role==="viewer";
   const editableIds=isAdmin?"all":isViewer?[]:(() => {
@@ -1297,7 +1539,8 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
             </div>
             {activeDay.matches.map(m=>(<MatchCard key={m.id} match={m} pars={course.par} t1Name={t1Name} t2Name={t2Name} canEdit={canEdit(m.id)} isAdmin={isAdmin} T={T} onHoleClick={(matchId,hi)=>setModal({dayId:activeDay.id,matchId,holeIndex:hi})} onReset={doReset}/>))}
             {isAdmin&&(<>
-              <button style={{width:"100%",padding:"12px",background:"transparent",border:"1px solid #E05252",borderRadius:"8px",color:"#E05252",fontSize:"12px",cursor:"pointer",marginTop:"4px",display:"flex",alignItems:"center",justifyContent:"center",gap:"8px"}} onClick={()=>setResetAll(true)}><IconReset size={14} color="#E05252"/> Alle Matches zurücksetzen</button>
+              <button style={{width:"100%",padding:"12px",background:"transparent",border:`1px solid ${T.blue}55`,borderRadius:"8px",color:T.blue,fontSize:"12px",cursor:"pointer",marginTop:"4px",display:"flex",alignItems:"center",justifyContent:"center",gap:"8px"}} onClick={()=>setPairingDay(activeDayIdx)}>✏️ Paarings Tag {activeDayIdx+1} ändern</button>
+              <button style={{width:"100%",padding:"12px",background:"transparent",border:"1px solid #E05252",borderRadius:"8px",color:"#E05252",fontSize:"12px",cursor:"pointer",marginTop:"8px",display:"flex",alignItems:"center",justifyContent:"center",gap:"8px"}} onClick={()=>setResetAll(true)}><IconReset size={14} color="#E05252"/> Alle Matches zurücksetzen</button>
               <button style={{width:"100%",padding:"12px",background:"transparent",border:`1px solid ${T.gold}55`,borderRadius:"8px",color:T.gold,fontSize:"12px",cursor:"pointer",marginTop:"8px",display:"flex",alignItems:"center",justifyContent:"center",gap:"8px"}} onClick={()=>setShowEndConfirm(true)}><IconArchive size={14} color={T.gold}/> Turnier beenden & archivieren</button>
             </>)}
           </>
@@ -1306,6 +1549,7 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
       {modal&&mMatch&&mDay&&(
         <ScoreModal match={mMatch} holeIndex={modal.holeIndex} t1Name={t1Name} t2Name={t2Name} par={(COURSES[mDay.courseKey]||Object.values(COURSES)[0]).par} existing={mMatch.scores[modal.holeIndex]} onSave={(t1s,t2s)=>saveScore(modal.dayId,modal.matchId,modal.holeIndex,t1s,t2s)} onClose={()=>setModal(null)} T={T}/>
       )}
+      {pairingDay!==null&&<PairingEditor config={config} dayIdx={pairingDay} T={T} onClose={()=>setPairingDay(null)} onSave={newConfig=>{setPairingDay(null);}}/>}
     </div>
   );
 }
