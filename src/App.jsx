@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
@@ -134,11 +134,13 @@ function ThemeToggle({theme,onToggle}){
   const isDark=theme==="dark";
   return(
     <button onClick={onToggle}
-      style={{display:"flex",alignItems:"center",gap:"0",background:isDark?"#1A4D2E":"#E8F5E9",border:`1px solid ${isDark?"#2D6B40":"#A5D6A7"}`,borderRadius:"20px",padding:"3px",cursor:"pointer",width:"52px",height:"28px",position:"relative",transition:"all 0.3s",flexShrink:0}}
-      title={isDark?"Zu hellem Modus":"Zu dunklem Modus"}>
-      <span style={{position:"absolute",left:"5px",fontSize:"13px",transition:"opacity 0.2s",opacity:isDark?1:0}}>🌙</span>
-      <span style={{position:"absolute",right:"5px",fontSize:"13px",transition:"opacity 0.2s",opacity:isDark?0:1}}>☀️</span>
-      <div style={{width:"22px",height:"22px",borderRadius:"50%",background:isDark?"#C9A84C":"#2E7D32",position:"absolute",left:isDark?"3px":"27px",transition:"left 0.3s",boxShadow:"0 1px 4px rgba(0,0,0,0.3)"}}/>
+      style={{display:"flex",alignItems:"center",gap:"5px",background:isDark?"#1A4D2E":"#E8F5E9",border:`1.5px solid ${isDark?"#C9A84C55":"#2E7D3255"}`,borderRadius:"20px",padding:"4px 8px 4px 4px",cursor:"pointer",height:"28px",position:"relative",transition:"all 0.3s",flexShrink:0}}>
+      <div style={{width:"20px",height:"20px",borderRadius:"50%",background:isDark?"#C9A84C":"#2E7D32",flexShrink:0,transition:"background 0.3s",boxShadow:"0 1px 4px rgba(0,0,0,0.3)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"11px"}}>
+        {isDark?"🌙":"☀️"}
+      </div>
+      <span style={{fontSize:"10px",fontWeight:"700",color:isDark?"#C9A84C":"#2E7D32",letterSpacing:"0.5px",whiteSpace:"nowrap"}}>
+        {isDark?"Nacht":"Tag"}
+      </span>
     </button>
   );
 }
@@ -1449,6 +1451,176 @@ function StatsTab({days,t1Name,t2Name,T}){
   );
 }
 
+// ── Course Tracker ────────────────────────────────────────────────────────────
+function CourseTracker({day, matches, matchRefs, T}){
+  const course = COURSES[day.courseKey] || Object.values(COURSES)[0];
+  const HOLE_R = 11;
+  const CARD_W = 56;
+  const CARD_H = 28;
+  const STEM_H = 6;
+
+  // completedHoles per match = number of scores entered
+  const completedHoles = matches.map(m =>
+    m.scores.filter(s => s.team1 !== null).length
+  );
+
+  // Status per match
+  const statuses = matches.map((m,i) => {
+    let diff=0, played=0;
+    m.scores.forEach(s => {
+      if(s.team1===null)return;
+      played++;
+      if(s.team1<s.team2)diff++;
+      else if(s.team2<s.team1)diff--;
+    });
+    const left=18-played;
+    if(!played)return{label:"—",diff:0};
+    if(left===0||Math.abs(diff)>left)return diff===0?{label:"AS",diff:0}:{label:`${Math.abs(diff)}&${left}`,diff};
+    return diff===0?{label:"AS",diff:0}:{label:`${Math.abs(diff)} UP`,diff};
+  });
+
+  // holeMap: holeIndex → matchIndex (one per hole)
+  // A match is "on hole h" when completedHoles===h (next hole to play)
+  // Done for R1: completedHoles===9; Done for R2: completedHoles===18
+  const holeMap = {};
+  // doneMI: { mi, label }  – shown in done row, persists into back 9
+  const doneMI = [];
+
+  matches.forEach((m,i) => {
+    const c = completedHoles[i];
+    if(c>=18){ doneMI.push({mi:i,label:"R1+R2"}); return; }
+    if(c===9){ doneMI.push({mi:i,label:"R1"}); return; }
+    holeMap[c]=i;
+  });
+  // Also collect R1-done matches that are now on back 9 (completedHoles 10..17)
+  matches.forEach((m,i) => {
+    const c = completedHoles[i];
+    if(c>=10&&c<18){ doneMI.push({mi:i,label:"R1 ✓"}); }
+  });
+
+  const allPastHole = h => matches.every((_,i) => completedHoles[i]>h);
+
+  const stColor = diff => diff>0?T.blue:diff<0?T.red:T.muted;
+  const bcColor = diff => diff>0?T.blue:diff<0?T.red:T.border;
+  const bgColor = (diff,T) => diff>0?T.blue+"0D":diff<0?T.red+"0D":T.isDark?"#0A1F10":T.elevated;
+
+  const scrollToMatch = mi => {
+    const ref = matchRefs[mi];
+    if(ref && ref.current){
+      ref.current.scrollIntoView({behavior:"smooth",block:"start"});
+      // flash handled by parent
+    }
+  };
+
+  function buildRow(rowIdx, stripW){
+    const start = rowIdx*9;
+    const rowPar = course.par.slice(start, start+9);
+    const HOLE_W = stripW/9;
+
+    let maxAbove=0, maxBelow=0;
+    rowPar.forEach((_,i)=>{
+      const hi=start+i; const mi=holeMap[hi];
+      if(mi===undefined)return;
+      if(mi%2===0)maxAbove=Math.max(maxAbove,1);
+      else maxBelow=Math.max(maxBelow,1);
+    });
+    const topPad = maxAbove>0 ? CARD_H+STEM_H+4 : 8;
+    const botPad = maxBelow>0 ? CARD_H+STEM_H+4 : 8;
+    const midY   = topPad+HOLE_R;
+    const totalH = topPad+HOLE_R*2+botPad;
+
+    return(
+      <div style={{position:"relative",height:totalH,marginBottom:4}}>
+        {/* Row label */}
+        <div style={{position:"absolute",top:0,left:0,fontSize:"7.5px",color:T.gold+"66",letterSpacing:"1px",fontWeight:"700",textTransform:"uppercase"}}>
+          {rowIdx===0?"R1 · L 1–9":"R2 · L 10–18"}
+        </div>
+        {/* Spine */}
+        <div style={{position:"absolute",top:midY,left:4,right:4,height:2,background:`linear-gradient(90deg,${T.border},${T.muted}44,${T.border})`,borderRadius:1,transform:"translateY(-50%)"}}/>
+        {rowPar.map((p,i)=>{
+          const hi=start+i, hNum=hi+1;
+          const mi=holeMap[hi];
+          const hasC=mi!==undefined;
+          const allP=allPastHole(hi);
+          const cx=(i+0.5)*HOLE_W;
+          const bg2 = hasC?T.gold+"22":allP?T.elevated:T.isDark?"#0A1F10":T.bg;
+          const bdr = hasC?T.gold:allP?T.border:T.isDark?"#1A3A20":"#D0DDD0";
+          const tc2 = hasC?T.gold:allP?T.muted:T.isDark?"#1E4020":"#C8D8C8";
+          const above = hasC&&(mi%2===0);
+          const st = hasC?statuses[mi]:{diff:0,label:""};
+          let cardLeft = hasC?Math.max(2,Math.min(Math.round(cx-CARD_W/2), stripW-CARD_W-2)):0;
+
+          return(
+            <div key={i}>
+              {/* Hole circle */}
+              <div style={{position:"absolute",left:cx-HOLE_R,top:midY-HOLE_R,width:HOLE_R*2,height:HOLE_R*2,borderRadius:"50%",background:bg2,border:`2px solid ${bdr}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,fontWeight:900,color:tc2,zIndex:2}}>{hNum}</div>
+              {/* Par */}
+              <div style={{position:"absolute",left:cx,top:midY+HOLE_R+3,transform:"translateX(-50%)",fontSize:"6.5px",color:T.isDark?"#1A3A20":"#C0D0C0",fontWeight:700}}>P{p}</div>
+              {/* Callout */}
+              {hasC&&(above?(
+                <>
+                  <div style={{position:"absolute",left:cx-0.75,top:midY-HOLE_R-STEM_H,width:1.5,height:STEM_H,background:T.gold+"33",zIndex:1}}/>
+                  <div onClick={()=>scrollToMatch(mi)} style={{position:"absolute",left:cardLeft,top:midY-HOLE_R-STEM_H-CARD_H,width:CARD_W,height:CARD_H,background:bgColor(st.diff,T),border:`1.5px solid ${bcColor(st.diff)}`,borderRadius:6,padding:"3px 6px",cursor:"pointer",zIndex:5,boxShadow:"0 2px 8px rgba(0,0,0,0.3)",display:"flex",alignItems:"center",justifyContent:"space-between",gap:4}}>
+                    <span style={{fontSize:10,fontWeight:900,color:T.gold,fontFamily:"'Arial Black',sans-serif"}}>M{mi+1}</span>
+                    <span style={{fontSize:11,fontWeight:900,color:stColor(st.diff),fontFamily:"'Arial Black',sans-serif",whiteSpace:"nowrap"}}>{st.label}</span>
+                  </div>
+                </>
+              ):(
+                <>
+                  <div style={{position:"absolute",left:cx-0.75,top:midY+HOLE_R,width:1.5,height:STEM_H,background:T.gold+"33",zIndex:1}}/>
+                  <div onClick={()=>scrollToMatch(mi)} style={{position:"absolute",left:cardLeft,top:midY+HOLE_R+STEM_H,width:CARD_W,height:CARD_H,background:bgColor(st.diff,T),border:`1.5px solid ${bcColor(st.diff)}`,borderRadius:6,padding:"3px 6px",cursor:"pointer",zIndex:5,boxShadow:"0 2px 8px rgba(0,0,0,0.3)",display:"flex",alignItems:"center",justifyContent:"space-between",gap:4}}>
+                    <span style={{fontSize:10,fontWeight:900,color:T.gold,fontFamily:"'Arial Black',sans-serif"}}>M{mi+1}</span>
+                    <span style={{fontSize:11,fontWeight:900,color:stColor(st.diff),fontFamily:"'Arial Black',sans-serif",whiteSpace:"nowrap"}}>{st.label}</span>
+                  </div>
+                </>
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  const stripRef = React.useRef(null);
+  const [stripW, setStripW] = useState(348);
+  useEffect(()=>{
+    if(!stripRef.current)return;
+    const obs=new ResizeObserver(e=>{setStripW(e[0].contentRect.width||348);});
+    obs.observe(stripRef.current);
+    return()=>obs.disconnect();
+  },[]);
+
+  return(
+    <div style={{background:T.isDark?"#0F2D1A":T.surface,border:`1px solid ${T.border}`,borderRadius:12,padding:"12px 10px 10px",marginBottom:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+        <div style={{fontSize:"10px",color:T.faint,letterSpacing:"2px",textTransform:"uppercase",fontWeight:"700"}}>🗺 Flights</div>
+        <div style={{fontSize:"10px",color:T.gold,fontWeight:"700"}}>{course.shortName}</div>
+      </div>
+      <div ref={stripRef}>
+        {buildRow(0, stripW)}
+        {buildRow(1, stripW)}
+      </div>
+      {doneMI.length>0&&(
+        <div style={{display:"flex",alignItems:"center",gap:5,padding:"6px 8px",background:T.gold+"0D",border:`1px solid ${T.gold}22`,borderRadius:8,marginTop:6,flexWrap:"wrap"}}>
+          <span style={{fontSize:"10px",color:T.gold,fontWeight:"700"}}>✅</span>
+          {doneMI.map(({mi,label},idx)=>{
+            const st=statuses[mi];
+            const c=stColor(st.diff);
+            return(
+              <span key={idx} onClick={()=>scrollToMatch(mi)}
+                style={{background:c+"22",border:`1px solid ${c}55`,borderRadius:5,padding:"3px 7px",fontSize:"10px",fontWeight:900,color:c,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:4}}>
+                <span style={{color:T.gold}}>M{mi+1}</span>
+                <span style={{color:T.faint,fontSize:9}}>{label}</span>
+                {st.label}
+              </span>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DaySummary({day,t1Name,t2Name,T}){
   const course=COURSES[day.courseKey]||Object.values(COURSES)[0];let t1=0,t2=0;
   day.matches.forEach(m=>{[0,1].forEach(r=>{const rs=calcRoundStatus(m.scores,course.par,r*9,r*9+9);const p=getPoints(rs);if(p){t1+=p.t1;t2+=p.t2;}});});
@@ -1469,6 +1641,8 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
   const [showEndConfirm,setShowEndConfirm]=useState(false);
   const [pairingDay,setPairingDay]=useState(null); // dayIdx to edit
   const prevRef=useRef(null);
+  // Refs for scrolling to match cards from tracker
+  const matchCardRefs=useRef({});
   const isAdmin=role==="admin",isViewer=role==="viewer";
   const editableIds=isAdmin?"all":isViewer?[]:(() => {
     const idx=parseInt(role.split("-")[1]);const all=[];days.forEach(d=>d.matches.forEach(m=>all.push(m.id)));
@@ -1526,6 +1700,15 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
           <div style={{marginTop:"10px",display:"flex",flexDirection:"column",gap:"6px"}}>{days.map(d=><DaySummary key={d.id} day={d} t1Name={t1Name} t2Name={t2Name} T={T}/>)}</div>
         </div>
 
+        {activeDay&&(
+          <CourseTracker
+            day={activeDay}
+            matches={activeDay.matches}
+            matchRefs={matchCardRefs.current}
+            T={T}
+          />
+        )}
+
         <div style={{display:"flex",marginBottom:"14px",borderRadius:"8px",overflow:"hidden",border:`1px solid ${T.border}`}}>
           {tabs.map((tab,i)=>(<button key={tab.key} style={{flex:1,padding:"10px 4px",background:activeTab===tab.key?T.elevated:T.isDark?"#0A2014":T.bg,border:"none",borderLeft:i>0?`1px solid ${T.border}`:"none",color:activeTab===tab.key?T.gold:T.muted,cursor:"pointer",fontSize:"10px",letterSpacing:"0.5px",textTransform:"uppercase",fontWeight:activeTab===tab.key?"700":"400",display:"flex",alignItems:"center",justifyContent:"center",gap:"4px"}} onClick={()=>setActiveTab(tab.key)}>{tab.icon}{tab.label}</button>))}
         </div>
@@ -1537,7 +1720,14 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}><div><div style={{fontSize:"13px",fontWeight:"700",color:T.cream}}>{course.name}</div><div style={{fontSize:"11px",color:T.faint}}>{course.location}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:"10px",color:T.muted}}>Par</div><div style={{fontSize:"18px",fontWeight:"900",color:T.gold}}>{course.par.slice(0,9).reduce((a,b)=>a+b,0)} / {course.par.slice(9).reduce((a,b)=>a+b,0)}</div></div></div>
               {[0,1].map(r=>(<div key={r} style={{display:"grid",gridTemplateColumns:"repeat(9,1fr)",gap:"3px",marginBottom:r===0?"3px":"0"}}>{course.par.slice(r*9,r*9+9).map((p,i)=>(<div key={i} style={{textAlign:"center",fontSize:"9px",padding:"2px 0",borderRadius:"3px",background:T.holeBg,color:T.holeText}}><div style={{opacity:0.6}}>{r*9+i+1}</div><div style={{fontWeight:"700"}}>P{p}</div></div>))}</div>))}
             </div>
-            {activeDay.matches.map(m=>(<MatchCard key={m.id} match={m} pars={course.par} t1Name={t1Name} t2Name={t2Name} canEdit={canEdit(m.id)} isAdmin={isAdmin} T={T} onHoleClick={(matchId,hi)=>setModal({dayId:activeDay.id,matchId,holeIndex:hi})} onReset={doReset}/>))}
+            {activeDay.matches.map((m,mi)=>{
+              const ref = matchCardRefs.current[mi] || (matchCardRefs.current[mi]=React.createRef());
+              return(
+                <div key={m.id} ref={ref} style={{scrollMarginTop:"76px"}}>
+                  <MatchCard match={m} pars={course.par} t1Name={t1Name} t2Name={t2Name} canEdit={canEdit(m.id)} isAdmin={isAdmin} T={T} onHoleClick={(matchId,hi)=>setModal({dayId:activeDay.id,matchId,holeIndex:hi})} onReset={doReset}/>
+                </div>
+              );
+            })}
             {isAdmin&&(<>
               <button style={{width:"100%",padding:"12px",background:"transparent",border:`1px solid ${T.blue}55`,borderRadius:"8px",color:T.blue,fontSize:"12px",cursor:"pointer",marginTop:"4px",display:"flex",alignItems:"center",justifyContent:"center",gap:"8px"}} onClick={()=>setPairingDay(activeDayIdx)}>✏️ Paarings Tag {activeDayIdx+1} ändern</button>
               <button style={{width:"100%",padding:"12px",background:"transparent",border:"1px solid #E05252",borderRadius:"8px",color:"#E05252",fontSize:"12px",cursor:"pointer",marginTop:"8px",display:"flex",alignItems:"center",justifyContent:"center",gap:"8px"}} onClick={()=>setResetAll(true)}><IconReset size={14} color="#E05252"/> Alle Matches zurücksetzen</button>
@@ -1698,7 +1888,7 @@ export default function App(){
   const [config,setConfig]=useState(null);
   const [role,setRole]=useState(null);
   const [loading,setLoading]=useState(false);
-  const [theme,setTheme]=useState(()=>{try{return localStorage.getItem("ryder_theme")||"dark";}catch(e){return"dark";}});
+  const [theme,setTheme]=useState(()=>{try{return localStorage.getItem("ryder_theme")||"light";}catch(e){return"light";}});
   // Warn when planning over existing tournament
   const [showOverwriteWarn,setShowOverwriteWarn]=useState(false);
   const [pendingNewTournament,setPendingNewTournament]=useState(false);
