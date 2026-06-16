@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
-const VERSION = "1.11";
+const VERSION = "1.13";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLlzavBNImCRG0JacPZWdVIxezxKiqHcc",
@@ -57,8 +57,8 @@ const GAME_MODES = {
 function calcRoundStatus(scores,pars,s,e){
   let diff=0,played=0,wonAtHole=-1,frozenLabel=null,frozenDiff=0;
   for(let i=s;i<e;i++){
-    const h=scores[i];
-    if(h.team1!==null&&h.team2!==null){
+    const h=scores[i]||{};
+    if(typeof h.team1==="number"&&typeof h.team2==="number"){
       played++;
       if(h.team1<h.team2)diff++;else if(h.team2<h.team1)diff--;
       // After updating diff, check if match is now decided
@@ -128,7 +128,7 @@ function calcStats(days,t1Name,t2Name){
       [0,1].forEach(r=>{
         const rs=calcRoundStatus(m.scores,course.par,r*9,r*9+9);const pts=getPoints(rs);
         if(pts){pairStats[key1].pts+=pts.t1;pairStats[key2].pts+=pts.t2;}
-        for(let i=r*9;i<r*9+9;i++){const sc=m.scores[i];if(sc.team1!==null&&sc.team2!==null){if(sc.team1<sc.team2){pairStats[key1].holesWon++;t1TotalHoles++;holeWins.t1[i]++;}else if(sc.team2<sc.team1){pairStats[key2].holesWon++;t2TotalHoles++;holeWins.t2[i]++;}else holeWins.tie[i]++;}}
+        for(let i=r*9;i<r*9+9;i++){const sc=m.scores[i]||{};if(typeof sc.team1==="number"&&typeof sc.team2==="number"){if(sc.team1<sc.team2){pairStats[key1].holesWon++;t1TotalHoles++;holeWins.t1[i]++;}else if(sc.team2<sc.team1){pairStats[key2].holesWon++;t2TotalHoles++;holeWins.t2[i]++;}else holeWins.tie[i]++;}}
       });
     });
   });
@@ -982,7 +982,8 @@ function NineHoleGrid({scores,pars,startHole,matchId,onHoleClick,canEdit,T}){
   // Sequential: scan forward from startHole, stop at first gap
   let lastConsec=startHole-1;
   for(let i=startHole;i<end;i++){
-    if(scores[i].team1!==null&&scores[i].team2!==null)lastConsec=i;
+    const _s=scores[i]||{};
+    if(typeof _s.team1==="number"&&typeof _s.team2==="number")lastConsec=i;
     else break;
   }
   const nextEmpty=lastConsec+1; // first hole that can be newly entered
@@ -993,8 +994,8 @@ function NineHoleGrid({scores,pars,startHole,matchId,onHoleClick,canEdit,T}){
     <div style={{display:"grid",gridTemplateColumns:"repeat(9,1fr)",gap:"3px"}}>
       {Array.from({length:9},(_,i)=>{
         const hn=startHole+i;
-        const s=scores[hn];
-        const played=s.team1!==null&&s.team2!==null;
+        const s=scores[hn]||{};
+        const played=typeof s.team1==="number"&&typeof s.team2==="number";
         const isDead=wonAt>=0&&hn>wonAt;
         const isClickable=canEdit&&(played||hn===nextEmpty);
         let bg=T.holeBg,color=T.holeText,border=`1px solid ${T.border}`;
@@ -1101,7 +1102,7 @@ function calcScoreDistribution(days) {
         const par = course.par[hi];
         const t1s = sc.team1; const t2s = sc.team2;
         [[t1s, pairs[0].key], [t2s, pairs[1].key]].forEach(([score, key]) => {
-          if (score === null || score === undefined) return;
+          if (typeof score!=="number") return;
           const diff = score - par;
           const d = pairDist[key];
           if (!d) return;
@@ -1142,7 +1143,7 @@ function calcMatchTimeline(match, pars) {
   // Returns array of 18 cumulative diff values (t1 perspective: + = t1 leading)
   let diff = 0;
   return match.scores.map((sc, hi) => {
-    if (sc.team1 !== null && sc.team2 !== null) {
+    if (typeof sc.team1==="number"&&typeof sc.team2==="number") {
       if (sc.team1 < sc.team2) diff++;
       else if (sc.team2 < sc.team1) diff--;
     }
@@ -1264,7 +1265,7 @@ function StatsTab({days,t1Name,t2Name,T}){
       const course = COURSES[day.courseKey]||Object.values(COURSES)[0];
       day.matches.forEach(m => {
         const timeline = calcMatchTimeline(m, course.par);
-        const hasData = m.scores.some(s=>s.team1!==null);
+        const hasData = m.scores.some(s=>typeof s.team1==="number");
         if (hasData) allMatches.push({match:m, timeline, day});
       });
     });
@@ -1272,7 +1273,7 @@ function StatsTab({days,t1Name,t2Name,T}){
     return(
       <div>
         {allMatches.map(({match,timeline,day},idx)=>{
-          const played = match.scores.filter(s=>s.team1!==null).length;
+          const played = match.scores.filter(s=>typeof s.team1==="number").length;
           const lastDiff = timeline[played-1]||0;
           const maxAbs = Math.max(...timeline.map(Math.abs),1);
           const W=280; const H=60; const pad=8;
@@ -1515,7 +1516,7 @@ function CourseTracker({day, matches, matchRefs, T}){
 
   // completedHoles per match = number of scores entered
   const completedHoles = matches.map(m =>
-    m.scores.filter(s => s.team1 !== null).length
+    m.scores.filter(s => typeof s.team1==="number").length
   );
 
   // Status per match
@@ -1794,12 +1795,12 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
                     // this is the server-side safety net.
                     const m2=activeDay.matches.find(mx=>mx.id===matchId);
                     if(!m2)return;
-                    const alreadyPlayed=m2.scores[hi]&&m2.scores[hi].team1!==null;
+                    const alreadyPlayed=!!(m2.scores[hi]&&typeof m2.scores[hi].team1==="number");
                     if(!alreadyPlayed){
                       const roundStart=hi<9?0:9;
                       let lastConsec=roundStart-1;
                       for(let k=roundStart;k<roundStart+9;k++){
-                        if(m2.scores[k]&&m2.scores[k].team1!==null)lastConsec=k;
+                        if(m2.scores[k]&&typeof (m2.scores[k]||{}).team1==="number")lastConsec=k;
                         else break;
                       }
                       if(hi!==lastConsec+1)return; // not the next hole in sequence
