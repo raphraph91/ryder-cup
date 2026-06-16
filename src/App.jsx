@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
-const VERSION = "1.10";
+const VERSION = "1.11";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLlzavBNImCRG0JacPZWdVIxezxKiqHcc",
@@ -978,50 +978,43 @@ function ScoreModal({match,holeIndex,t1Name,t2Name,existing,par,onSave,onClose,T
 }
 
 function NineHoleGrid({scores,pars,startHole,matchId,onHoleClick,canEdit,T}){
-  // Determine where this round was decided (for deadhole dimming)
-  const rs = calcRoundStatus(scores,pars,startHole,startHole+9);
-  const decisionHole = rs.won ? rs.wonAtHole : -1; // global index, -1 = undecided
-
-  // Sequential entry: find last played hole in this round
-  let lastPlayed = startHole - 1;
-  for(let i=startHole;i<startHole+9;i++){
-    if(scores[i].team1!==null&&scores[i].team2!==null) lastPlayed=i;
+  const end=startHole+9;
+  // Sequential: scan forward from startHole, stop at first gap
+  let lastConsec=startHole-1;
+  for(let i=startHole;i<end;i++){
+    if(scores[i].team1!==null&&scores[i].team2!==null)lastConsec=i;
     else break;
   }
-
+  const nextEmpty=lastConsec+1; // first hole that can be newly entered
+  // Deadhole: where was this round decided?
+  const rs=calcRoundStatus(scores,pars,startHole,end);
+  const wonAt=(rs.won&&rs.wonAtHole>=0)?rs.wonAtHole:-1;
   return(
     <div style={{display:"grid",gridTemplateColumns:"repeat(9,1fr)",gap:"3px"}}>
-      {scores.slice(startHole,startHole+9).map((s,i)=>{
-        const hn=startHole+i,p=pars[hn],played=s.team1!==null&&s.team2!==null;
-        const isDead = decisionHole>=0 && hn>decisionHole; // after match decided
-        // Sequential lock: only allow entry if previous hole is filled
-        // (always allow editing already-played holes)
-        const isNextHole = hn === lastPlayed+1;
-        const isClickable = canEdit && (played || isNextHole);
-
+      {Array.from({length:9},(_,i)=>{
+        const hn=startHole+i;
+        const s=scores[hn];
+        const played=s.team1!==null&&s.team2!==null;
+        const isDead=wonAt>=0&&hn>wonAt;
+        const isClickable=canEdit&&(played||hn===nextEmpty);
         let bg=T.holeBg,color=T.holeText,border=`1px solid ${T.border}`;
-        if(played){
-          if(isDead){
-            // Dead hole: dimmed, dashed border
-            bg=T.holeBg; color=T.faint;
-            border=`1px dashed ${T.border}`;
-          } else {
-            border="none";
-            if(s.team1<s.team2){bg=T.blue+"25";color=T.blue;}
-            else if(s.team2<s.team1){bg=T.red+"25";color=T.red;}
-            else{bg=T.border;color=T.muted;}
-          }
+        if(played&&!isDead){
+          border="none";
+          if(s.team1<s.team2){bg=T.blue+"25";color=T.blue;}
+          else if(s.team2<s.team1){bg=T.red+"25";color=T.red;}
+          else{bg=T.border;color=T.muted;}
         }
-        const opacity = isDead&&played ? 0.38 : isClickable ? 1 : played ? 0.9 : 0.45;
-        const cursor  = isClickable ? "pointer" : "default";
+        const opacity=(isDead&&played)?0.32:(!isClickable&&!played)?0.45:1;
         return(
           <div key={i}
-            style={{borderRadius:"4px",cursor,background:bg,color,border,userSelect:"none",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"2px 0",minHeight:"32px",opacity,transition:"opacity 0.15s"}}
-            onClick={()=>isClickable&&onHoleClick(matchId,hn)}>
+            style={{borderRadius:"4px",cursor:isClickable?"pointer":"default",background:bg,color,
+                    border:isDead&&played?`1px dashed ${T.border}`:border,
+                    userSelect:"none",display:"flex",flexDirection:"column",alignItems:"center",
+                    justifyContent:"center",padding:"2px 0",minHeight:"32px",opacity,transition:"opacity 0.15s"}}
+            onClick={()=>{if(isClickable)onHoleClick(matchId,hn);}}>
             <div style={{fontSize:"9px",fontWeight:"700",lineHeight:1}}>{hn+1}</div>
-            <div style={{fontSize:"7px",opacity:0.6,lineHeight:1}}>P{p}</div>
-            {played&&<div style={{fontSize:"8px",fontWeight:"900",lineHeight:1}}>{s.team1}:{s.team2}</div>}
-            {isDead&&played&&<div style={{fontSize:"6px",lineHeight:1,opacity:0.6}}>—</div>}
+            <div style={{fontSize:"7px",opacity:0.5,lineHeight:1}}>P{pars[hn]}</div>
+            {played&&<div style={{fontSize:"8px",fontWeight:"900",lineHeight:1,opacity:isDead?0.5:1}}>{s.team1}:{s.team2}</div>}
           </div>
         );
       })}
@@ -1797,24 +1790,20 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
               return(
                 <div key={m.id} ref={ref} style={{scrollMarginTop:"76px"}}>
                   <MatchCard match={m} pars={course.par} t1Name={t1Name} t2Name={t2Name} canEdit={canEdit(m.id)} isAdmin={isAdmin} T={T} onHoleClick={(matchId,hi)=>{
-                    // Sequential guard: only open modal if previous hole is filled
-                    // (or it's an edit of an already-played hole)
-                    const m2=activeDay.matches.find(m=>m.id===matchId);
+                    // Double-guard: NineHoleGrid already blocks visually,
+                    // this is the server-side safety net.
+                    const m2=activeDay.matches.find(mx=>mx.id===matchId);
                     if(!m2)return;
-                    const prevScore=hi>0?m2.scores[hi-1]:null;
-                    const thisScore=m2.scores[hi];
-                    const alreadyPlayed=thisScore&&thisScore.team1!==null;
-                    const prevPlayed=hi===0||(prevScore&&prevScore.team1!==null);
-                    // Within same round: check continuity
-                    // (hi===9 starts round 2, previous in that round is hi-1 if >9, else no constraint)
-                    const roundStart=hi<9?0:9;
-                    // Find last filled hole in this round
-                    let lastFilled=roundStart-1;
-                    for(let k=roundStart;k<roundStart+9;k++){
-                      if(m2.scores[k]&&m2.scores[k].team1!==null)lastFilled=k;
-                      else break;
+                    const alreadyPlayed=m2.scores[hi]&&m2.scores[hi].team1!==null;
+                    if(!alreadyPlayed){
+                      const roundStart=hi<9?0:9;
+                      let lastConsec=roundStart-1;
+                      for(let k=roundStart;k<roundStart+9;k++){
+                        if(m2.scores[k]&&m2.scores[k].team1!==null)lastConsec=k;
+                        else break;
+                      }
+                      if(hi!==lastConsec+1)return; // not the next hole in sequence
                     }
-                    if(!alreadyPlayed&&hi!==lastFilled+1)return;
                     setModal({dayId:activeDay.id,matchId,holeIndex:hi});
                   }} onReset={doReset}/>
                 </div>
