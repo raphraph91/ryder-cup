@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
-const VERSION = "1.09";
+const VERSION = "1.10";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLlzavBNImCRG0JacPZWdVIxezxKiqHcc",
@@ -55,23 +55,35 @@ const GAME_MODES = {
 };
 
 function calcRoundStatus(scores,pars,s,e){
-  let diff=0,played=0,wonAtHole=-1;
+  let diff=0,played=0,wonAtHole=-1,frozenLabel=null,frozenDiff=0;
   for(let i=s;i<e;i++){
     const h=scores[i];
     if(h.team1!==null&&h.team2!==null){
       played++;
       if(h.team1<h.team2)diff++;else if(h.team2<h.team1)diff--;
-      // Check if match is clinched after this hole (before continuing)
+      // After updating diff, check if match is now decided
       const remaining=e-s-played;
-      if(wonAtHole===-1&&remaining<Math.abs(diff)){wonAtHole=i;}
+      if(wonAtHole===-1&&Math.abs(diff)>remaining){
+        wonAtHole=i;
+        frozenDiff=diff;
+        // Freeze the label at this exact moment: e.g. "5&4", "3&2", "1UP" (last hole)
+        frozenLabel=remaining===0?"1UP":`${Math.abs(diff)}&${remaining}`;
+      }
     }
   }
-  const left=e-s-played;let won=false,label="AS";
-  if(left===0){won=true;label=diff>0?"1UP":diff<0?"1UP":"AS";}
-  else if(Math.abs(diff)>left){won=true;label=`${Math.abs(diff)}&${left}`;}
-  else if(diff!==0){label=`${Math.abs(diff)} UP`;}
-  // wonAtHole = global hole index where match was decided (-1 = not decided)
-  return{diff,holesPlayed:played,holesLeft:left,label,won,wonAtHole};
+  const left=e-s-played;
+  let label="AS",won=false;
+  if(wonAtHole!==-1){
+    // Match decided mid-round — label frozen at decision point (e.g. "3&2", "2&1", "1UP")
+    label=frozenLabel; won=true;
+  } else if(left===0){
+    // All holes played, decide now
+    won=true;
+    label=diff>0?"1UP":diff<0?"1UP":"AS";
+  } else if(diff!==0){
+    label=`${Math.abs(diff)} UP`;
+  }
+  return{diff:wonAtHole!==-1?frozenDiff:diff,holesPlayed:played,holesLeft:left,label,won,wonAtHole};
 }
 function getPoints(rs){if(rs.won||rs.holesLeft===0){if(rs.diff>0)return{t1:1,t2:0};if(rs.diff<0)return{t1:0,t2:1};return{t1:0.5,t2:0.5};}return null;}
 function projectedPoints(rs){if(rs.won||rs.holesLeft===0)return getPoints(rs);const a=rs.diff/18;return{t1:0.5+a*0.4,t2:0.5-a*0.4};}
@@ -1784,7 +1796,27 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
               const ref = matchCardRefs.current[mi] || (matchCardRefs.current[mi]=React.createRef());
               return(
                 <div key={m.id} ref={ref} style={{scrollMarginTop:"76px"}}>
-                  <MatchCard match={m} pars={course.par} t1Name={t1Name} t2Name={t2Name} canEdit={canEdit(m.id)} isAdmin={isAdmin} T={T} onHoleClick={(matchId,hi)=>setModal({dayId:activeDay.id,matchId,holeIndex:hi})} onReset={doReset}/>
+                  <MatchCard match={m} pars={course.par} t1Name={t1Name} t2Name={t2Name} canEdit={canEdit(m.id)} isAdmin={isAdmin} T={T} onHoleClick={(matchId,hi)=>{
+                    // Sequential guard: only open modal if previous hole is filled
+                    // (or it's an edit of an already-played hole)
+                    const m2=activeDay.matches.find(m=>m.id===matchId);
+                    if(!m2)return;
+                    const prevScore=hi>0?m2.scores[hi-1]:null;
+                    const thisScore=m2.scores[hi];
+                    const alreadyPlayed=thisScore&&thisScore.team1!==null;
+                    const prevPlayed=hi===0||(prevScore&&prevScore.team1!==null);
+                    // Within same round: check continuity
+                    // (hi===9 starts round 2, previous in that round is hi-1 if >9, else no constraint)
+                    const roundStart=hi<9?0:9;
+                    // Find last filled hole in this round
+                    let lastFilled=roundStart-1;
+                    for(let k=roundStart;k<roundStart+9;k++){
+                      if(m2.scores[k]&&m2.scores[k].team1!==null)lastFilled=k;
+                      else break;
+                    }
+                    if(!alreadyPlayed&&hi!==lastFilled+1)return;
+                    setModal({dayId:activeDay.id,matchId,holeIndex:hi});
+                  }} onReset={doReset}/>
                 </div>
               );
             })}
