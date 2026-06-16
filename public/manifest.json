@@ -1,11 +1,11 @@
 {
-  "name": "Ryder Cup",
-  "short_name": "Ryder Cup",
-  "description": "Ryder Cup Friends Edition – Score Tracker",
+  "name": "Pin High",
+  "short_name": "Pin High",
+  "description": "Pin High – Friends Tour Score Tracker",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0D2B1A",
-  "theme_color": "#0D2B1A",
+  "background_color": "#0D1B2E",
+  "theme_color": "#0D1B2E",
   "orientation": "portrait",
   "icons": [
     { "src": "/icon-192.svg", "sizes": "192x192", "type": "image/svg+xml", "purpose": "any maskable" },
