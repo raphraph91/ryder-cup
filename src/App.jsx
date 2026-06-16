@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
-const VERSION = "1.13";
+const VERSION = "1.14";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLlzavBNImCRG0JacPZWdVIxezxKiqHcc",
@@ -97,6 +97,32 @@ function calcTournament(days){
   const s=t1p+t2p;return{t1Confirmed:t1c,t2Confirmed:t2c,t1Projected:Math.round(t1p*10)/10,t2Projected:Math.round(t2p*10)/10,t1WinProb:s>0?Math.round((t1p/s)*100):50,t2WinProb:s>0?Math.round((t2p/s)*100):50,totalPoints:total,needed:total/2+0.5};
 }
 function emptyScores(){return Array.from({length:18},()=>({team1:null,team2:null}));}
+
+// Normalize config loaded from Firestore – fills in missing fields so the
+// rest of the code never has to guard against undefined scores/matches/days.
+function normalizeConfig(cfg){
+  if(!cfg)return cfg;
+  const days=(cfg.days||[]).map(day=>({
+    ...day,
+    matches:(day.matches||[]).map(m=>({
+      ...m,
+      scores: Array.from({length:18},(_,i)=>{
+        const s=(m.scores||[])[i]||{};
+        return{
+          team1: typeof s.team1==="number"?s.team1:null,
+          team2: typeof s.team2==="number"?s.team2:null,
+        };
+      }),
+      t1Pair:   m.t1Pair   || [],
+      t2Pair:   m.t2Pair   || [],
+      t1PlayerIds: m.t1PlayerIds || [],
+      t2PlayerIds: m.t2PlayerIds || [],
+      t1Photos: m.t1Photos || {},
+      t2Photos: m.t2Photos || {},
+    })),
+  }));
+  return{...cfg, days};
+}
 function detectPointChange(oldDays,newDays,t1Name,t2Name){
   if(!oldDays)return null;
   for(let di=0;di<newDays.length;di++){
@@ -1984,7 +2010,7 @@ export default function App(){
     setRole(r);setLoading(true);
     try{
       const s=await getDoc(doc(db,"tournaments","ryder2024"));
-      if(s.exists()&&s.data()?.phase==="game"){setConfig(s.data());if(r==="admin")setPhase("adminMenu");else setPhase("game");}
+      if(s.exists()&&s.data()?.phase==="game"){setConfig(normalizeConfig(s.data()));if(r==="admin")setPhase("adminMenu");else setPhase("game");}
       else{if(r==="admin")setPhase("adminMenu");else setPhase("waiting");}
     }catch(e){if(r==="admin")setPhase("adminMenu");else setPhase("waiting");}
     setLoading(false);
@@ -2011,7 +2037,7 @@ export default function App(){
   useEffect(()=>{
     const needsLive=(phase==="game")||(phase==="adminMenu"&&adminSection==="game");
     if(!needsLive)return;
-    const u=onSnapshot(doc(db,"tournaments","ryder2024"),s=>{if(s.exists()&&s.data()?.phase==="game")setConfig(s.data());});
+    const u=onSnapshot(doc(db,"tournaments","ryder2024"),s=>{if(s.exists()&&s.data()?.phase==="game")setConfig(normalizeConfig(s.data()));});
     return()=>u();
   },[phase,adminSection]);
 
