@@ -1,6 +1,6 @@
 {
-  "name": "pin-high",
-  "version": "1.0.0",
+  "name": "ryder-cup",
+  "version": "2.0.0",
   "private": true,
   "dependencies": {
     "react": "^18.2.0",

@@ -1,7 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
-  <rect width="32" height="32" rx="6" fill="#0A1628"/>
-  <text x="3" y="25" font-family="Georgia,'Times New Roman',serif" font-size="22" font-weight="700" fill="#C9A96E">P</text>
-  <line x1="22" y1="4" x2="22" y2="16" stroke="#C9A96E" stroke-width="2" stroke-linecap="round"/>
-  <path d="M22 4 L30 8 L22 12 Z" fill="#C9A96E"/>
-  <line x1="18" y1="16" x2="26" y2="16" stroke="#C9A96E" stroke-width="2" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="7" fill="#0D2B1A"/>
+  <rect x="14" y="4" width="2.5" height="24" rx="1.2" fill="#C9A84C"/>
+  <polygon points="16.5,4 27,8.5 16.5,13" fill="#C9A84C"/>
 </svg>
