@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
-const VERSION = "2.04";
+const VERSION = "2.05";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLlzavBNImCRG0JacPZWdVIxezxKiqHcc",
@@ -849,16 +849,18 @@ function TournamentPlanning({onStart,onBack,T,theme,onThemeToggle}){
     for(let i=0;i<playersPerSlot;i++){if(!m.t1Players[i]||!m.t2Players[i])return false;}
     return true;
   };
-  const allMatchesFilled=matchAssign.slice(0,numDays).every(day=>day.every(matchFilled));
+  const day1Filled=matchAssign[0]?.every(matchFilled)??false;
   const tab0ok=t1Name.trim()&&t2Name.trim();
   const tab1ok=t1Players.length>=playersPerSlot&&t2Players.length>=playersPerSlot&&unassigned.length===0&&selectedIds.size>=2;
 
   const handleStart=async()=>{
-    if(!allMatchesFilled)return;setSaving(true);
+    if(!day1Filled)return;setSaving(true);
     const playerMap={};allSavedPlayers.forEach(p=>{playerMap[p.id]=p;});
     const days=daySettings.slice(0,numDays).map((ds,di)=>{
       const mode=ds.mode;
-      const matches=matchAssign[di].map((ma,mi)=>{
+      const dayMatches=matchAssign[di]||[];
+      const allFilled=dayMatches.every(matchFilled);
+      const matches=allFilled?dayMatches.map((ma,mi)=>{
         const p1a=playerMap[ma.t1Players[0]];const p1b=playerMap[ma.t1Players[1]];
         const p2a=playerMap[ma.t2Players[0]];const p2b=playerMap[ma.t2Players[1]];
         const t1Pair=[p1a?`${p1a.fn} ${p1a.ln}`:"?",p1b?`${p1b.fn} ${p1b.ln}`:null].filter(Boolean);
@@ -872,14 +874,20 @@ function TournamentPlanning({onStart,onBack,T,theme,onThemeToggle}){
           teamHcp1:p1a?parseFloat(p1a.hcp||0):null,teamHcp2:p2a?parseFloat(p2a.hcp||0):null,
           scores:emptyScores()
         };
-      });
-      return{id:di,label:`Tag ${di+1} – ${COURSES[ds.courseKey]?.shortName||ds.courseKey}`,courseKey:ds.courseKey,mode,matches};
+      }):[];
+      // status: "pending" | "active" | "done"
+      const status=di===0?"pending":"setup";
+      return{id:di,label:`Tag ${di+1} – ${COURSES[ds.courseKey]?.shortName||ds.courseKey}`,courseKey:ds.courseKey,mode,matches,status,pairingsDone:allFilled};
     });
-    const config={t1Name,t2Name,matchFormat,captainT1,captainT2,t1Players:t1Players.map(p=>({id:p.id,fn:p.fn,ln:p.ln,hcp:p.hcp,photo:p.photo||null,isCapt:p.id===captainT1})),t2Players:t2Players.map(p=>({id:p.id,fn:p.fn,ln:p.ln,hcp:p.hcp,photo:p.photo||null,isCapt:p.id===captainT2})),days,phase:"game",startedAt:Date.now()};
+    const config={t1Name,t2Name,matchFormat,captainT1,captainT2,
+      t1Players:t1Players.map(p=>({id:p.id,fn:p.fn,ln:p.ln,hcp:p.hcp,photo:p.photo||null,isCapt:p.id===captainT1})),
+      t2Players:t2Players.map(p=>({id:p.id,fn:p.fn,ln:p.ln,hcp:p.hcp,photo:p.photo||null,isCapt:p.id===captainT2})),
+      days,phase:"game",startedAt:Date.now()};
     await saveTournament(config);setSaving(false);onStart(config);
   };
 
   const tabLabels=["⚙️ Setup","👥 Spieler","🏌️ Matches"];
+  const noCaptain=(!captainT1||!captainT2)&&(t1Players.length>0||t2Players.length>0);
 
   return(
     <div style={{minHeight:"100vh",background:T.bg,color:T.cream,fontFamily:"Georgia,serif"}}>
@@ -955,6 +963,15 @@ function TournamentPlanning({onStart,onBack,T,theme,onThemeToggle}){
         {/* ── TAB 1 ── */}
         {tab===1&&(
           <>
+            {noCaptain&&(
+              <div style={{background:T.gold+"22",border:`1.5px solid ${T.gold}`,borderRadius:"10px",padding:"10px 14px",marginBottom:"12px",display:"flex",alignItems:"center",gap:"10px"}}>
+                <div style={{fontSize:"20px"}}>🎖️</div>
+                <div>
+                  <div style={{fontSize:"12px",fontWeight:"700",color:T.gold}}>Kein Captain vergeben!</div>
+                  <div style={{fontSize:"11px",color:T.faint}}>Bitte für {!captainT1&&t1Players.length>0?`🔵 ${t1Name}`:""}{""}  {!captainT2&&t2Players.length>0?`🔴 ${t2Name}`:""} einen Captain wählen (🎖️ Icon)</div>
+                </div>
+              </div>
+            )}
             <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"10px"}}>
               <div style={{fontSize:"11px",color:T.muted}}>✅ Haken = dabei · 🔵🔴 Team · 🎖️ Captain</div>
               <button onClick={toggleSelectAll} style={{padding:"6px 12px",borderRadius:"20px",border:`1px solid ${allSelected?T.gold:T.border}`,background:allSelected?T.gold+"22":"transparent",color:allSelected?T.gold:T.muted,fontSize:"11px",fontWeight:allSelected?"700":"400",cursor:"pointer",whiteSpace:"nowrap"}}>
@@ -1102,11 +1119,16 @@ function TournamentPlanning({onStart,onBack,T,theme,onThemeToggle}){
                 </div>
               );
             })}
-            <button disabled={!allMatchesFilled||saving} onClick={handleStart}
-              style={{width:"100%",padding:"13px",background:allMatchesFilled?`linear-gradient(135deg,${T.gold},#A07830)`:T.elevated,border:"none",borderRadius:"8px",color:allMatchesFilled?T.isDark?"#0D2B1A":"white":T.muted,fontSize:"14px",fontWeight:"900",letterSpacing:"2px",textTransform:"uppercase",cursor:allMatchesFilled?"pointer":"not-allowed",opacity:allMatchesFilled?1:0.5,marginTop:"6px"}}>
+            <button disabled={!day1Filled||saving} onClick={handleStart}
+              style={{width:"100%",padding:"13px",background:day1Filled?`linear-gradient(135deg,${T.gold},#A07830)`:T.elevated,border:"none",borderRadius:"8px",color:day1Filled?T.isDark?"#0D2B1A":"white":T.muted,fontSize:"14px",fontWeight:"900",letterSpacing:"2px",textTransform:"uppercase",cursor:day1Filled?"pointer":"not-allowed",opacity:day1Filled?1:0.5,marginTop:"6px"}}>
               {saving?"Speichere...":"Turnier starten 🏌️"}
             </button>
-            {!allMatchesFilled&&<div style={{fontSize:"11px",color:T.faint,textAlign:"center",marginTop:"8px"}}>Alle Match-Slots müssen befüllt sein</div>}
+            {!day1Filled&&<div style={{fontSize:"11px",color:T.faint,textAlign:"center",marginTop:"8px"}}>Spieltag 1 muss vollständig befüllt sein</div>}
+            {day1Filled&&numDays>1&&!matchAssign.slice(1).every(d=>d.every(matchFilled))&&(
+              <div style={{fontSize:"11px",color:T.gold,textAlign:"center",marginTop:"8px",background:T.gold+"11",borderRadius:"6px",padding:"6px"}}>
+                ℹ️ Spieltag 2+ Pairings können später vom Admin eingestellt werden
+              </div>
+            )}
           </>
         )}
       </div>
@@ -1282,16 +1304,30 @@ function ScoreModal({match,holeIndex,t1Name,t2Name,existing,par,onSave,onClose,T
   const hp=par[holeIndex];const mode=GAME_MODES[match.mode||"scramble"];
   const t1Photos=match.t1Photos||{};const t2Photos=match.t2Photos||{};
   const t1PlayerIds=match.t1PlayerIds||[];const t2PlayerIds=match.t2PlayerIds||[];
+  const isRound2Start=holeIndex===9;
+  const isRound1=holeIndex<9;
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:100}} onClick={onClose}>
       <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"16px 16px 0 0",padding:"22px 18px 30px",width:"100%",maxWidth:"480px"}} onClick={e=>e.stopPropagation()}>
         <div style={{width:"36px",height:"4px",background:T.border,borderRadius:"2px",margin:"0 auto 16px"}}/>
+
+        {/* Round 2 transition banner */}
+        {isRound2Start&&(
+          <div style={{background:`linear-gradient(135deg,${T.gold}33,${T.gold}11)`,border:`2px solid ${T.gold}`,borderRadius:"10px",padding:"10px 14px",marginBottom:"14px",textAlign:"center"}}>
+            <div style={{fontSize:"18px",marginBottom:"2px"}}>🏁➡️🏌️</div>
+            <div style={{fontSize:"14px",fontWeight:"900",color:T.gold,letterSpacing:"1px"}}>RUNDE 2 BEGINNT!</div>
+            <div style={{fontSize:"10px",color:T.faint,marginTop:"2px"}}>Löcher 10–18 · Neue Runde, neue Punkte</div>
+          </div>
+        )}
+
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"14px"}}>
           <div>
             <div style={{fontSize:"15px",fontWeight:"900",color:T.gold,textTransform:"uppercase",letterSpacing:"1px"}}>Loch {holeIndex+1} · {match.name}</div>
-            <div style={{fontSize:"11px",color:T.muted,marginTop:"2px"}}>{holeIndex<9?"Runde 1":"Runde 2"} · {mode?.icon} {mode?.label}</div>
+            <div style={{fontSize:"11px",color:isRound1?T.muted:T.gold,marginTop:"2px",fontWeight:isRound1?"400":"700"}}>
+              {isRound1?"Runde 1 · L. 1–9":"⛳ Runde 2 · L. 10–18"} · {mode?.icon} {mode?.label}
+            </div>
           </div>
-          <div style={{textAlign:"center",background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"6px 12px"}}><div style={{fontSize:"9px",color:T.muted}}>PAR</div><div style={{fontSize:"22px",fontWeight:"900",color:T.gold,lineHeight:1}}>{hp}</div></div>
+          <div style={{textAlign:"center",background:isRound2Start?T.gold+"22":T.elevated,border:`1px solid ${isRound2Start?T.gold:T.border}`,borderRadius:"8px",padding:"6px 12px"}}><div style={{fontSize:"9px",color:T.muted}}>PAR</div><div style={{fontSize:"22px",fontWeight:"900",color:T.gold,lineHeight:1}}>{hp}</div></div>
         </div>
         <div style={{display:"flex",gap:"12px",marginBottom:"16px"}}>
           {[{name:t1Name,val:t1,set:setT1,color:T.blue,pair:match.t1Pair||[],playerIds:t1PlayerIds,photos:t1Photos},{name:t2Name,val:t2,set:setT2,color:T.red,pair:match.t2Pair||[],playerIds:t2PlayerIds,photos:t2Photos}].map((item,i)=>(
@@ -1299,7 +1335,7 @@ function ScoreModal({match,holeIndex,t1Name,t2Name,existing,par,onSave,onClose,T
               <div style={{fontSize:"11px",color:item.color,letterSpacing:"1px",textTransform:"uppercase",marginBottom:"6px"}}>{item.name}</div>
               <div style={{display:"flex",justifyContent:"center",gap:"4px",marginBottom:"6px"}}>{item.pair.map((name,pi)=>{const pid=item.playerIds[pi];const photo=pid?item.photos[pid]:null;return<PlayerAvatar key={pi} name={name} size={32} color={item.color} photo={photo}/>;})}</div>
               <div style={{fontSize:"11px",color:item.color,fontWeight:"600",marginBottom:"6px"}}>{item.pair.join(" & ")}</div>
-              <input type="number" min="1" max="12" style={{width:"100%",fontSize:"36px",fontWeight:"900",background:T.isDark?"#060E1A":T.elevated,border:`2px solid ${T.border}`,borderRadius:"8px",color:T.cream,textAlign:"center",padding:"8px 0",outline:"none",boxSizing:"border-box"}} value={item.val} onChange={e=>item.set(e.target.value)} autoFocus={i===0}/>
+              <input type="number" min="1" max="12" style={{width:"100%",fontSize:"36px",fontWeight:"900",background:T.isDark?"#060E1A":T.elevated,border:`2px solid ${isRound2Start?T.gold:T.border}`,borderRadius:"8px",color:T.cream,textAlign:"center",padding:"8px 0",outline:"none",boxSizing:"border-box"}} value={item.val} onChange={e=>item.set(e.target.value)} autoFocus={i===0}/>
             </div>
           ))}
         </div>
@@ -1394,7 +1430,11 @@ function MatchCard({match,pars,t1Name,t2Name,canEdit,isAdmin,onHoleClick,onReset
           </div>
           <div style={{fontSize:"9px",color:T.faint,letterSpacing:"1px",marginBottom:"3px"}}>RUNDE 1</div>
           <NineHoleGrid scores={match.scores} pars={pars} startHole={0} matchId={match.id} onHoleClick={onHoleClick} canEdit={canEdit} T={T} roundStatus={r1}/>
-          <div style={{fontSize:"9px",color:T.faint,letterSpacing:"1px",margin:"6px 0 3px"}}>RUNDE 2</div>
+          <div style={{margin:"8px 0 6px",display:"flex",alignItems:"center",gap:"6px"}}>
+            <div style={{flex:1,height:"1px",background:`linear-gradient(90deg,transparent,${T.gold}44)`}}/>
+            <div style={{fontSize:"9px",color:T.gold,fontWeight:"700",letterSpacing:"1px",background:T.gold+"18",border:`1px solid ${T.gold}44`,borderRadius:"4px",padding:"2px 8px"}}>⛳ RUNDE 2</div>
+            <div style={{flex:1,height:"1px",background:`linear-gradient(90deg,${T.gold}44,transparent)`}}/>
+          </div>
           <NineHoleGrid scores={match.scores} pars={pars} startHole={9} matchId={match.id} onHoleClick={onHoleClick} canEdit={canEdit} T={T} roundStatus={r2}/>
           {!canEdit&&!isAdmin&&<div style={{marginTop:"8px",fontSize:"10px",color:T.faint,textAlign:"center"}}>🔒 Nur lesbar</div>}
         </div>
@@ -1834,38 +1874,43 @@ function CourseTracker({day, matches, matchRefs, T}){
   const CARD_H = 28;
   const STEM_H = 6;
 
-  // completedHoles per match = number of scores entered
-  const completedHoles = matches.map(m =>
-    m.scores.filter(s => s.team1 !== null).length
-  );
+  // completedHoles per match = next hole to play (dead holes count as played for position)
+  // but for label we use calcRoundStatus which freezes at decision point
+  const completedHoles = matches.map(m => {
+    // Find first unplayed hole
+    const firstEmpty = m.scores.findIndex(s => s.team1 === null);
+    return firstEmpty === -1 ? 18 : firstEmpty;
+  });
 
-  // Status per match
+  // Status per match using proper calcRoundStatus (freezes at decision, ignores dead holes)
   const statuses = matches.map((m,i) => {
-    let diff=0, played=0;
-    m.scores.forEach(s => {
-      if(s.team1===null)return;
-      played++;
-      if(s.team1<s.team2)diff++;
-      else if(s.team2<s.team1)diff--;
-    });
-    const left=18-played;
-    if(!played)return{label:"—",diff:0};
-    if(left===0||Math.abs(diff)>left)return diff===0?{label:"AS",diff:0}:{label:`${Math.abs(diff)}&${left}`,diff};
-    return diff===0?{label:"AS",diff:0}:{label:`${Math.abs(diff)} UP`,diff};
+    const c = completedHoles[i];
+    if(!c)return{label:"—",diff:0};
+    // Combine both rounds for overall diff and label
+    const r1 = calcRoundStatus(m.scores, course.par, 0, 9);
+    const r2 = calcRoundStatus(m.scores, course.par, 9, 18);
+    // Show current round's status if active, or overall
+    const inR2 = c > 9;
+    const active = inR2 ? r2 : r1;
+    if(!inR2 && !r1.holesPlayed) return {label:"—",diff:0};
+    // Overall diff across both rounds for color
+    const totalDiff = r1.diff + (inR2 ? r2.diff : 0);
+    const label = active.label;
+    return {label, diff: totalDiff};
   });
 
   // holeMap: holeIndex → [matchIndex, ...] (multiple matches can share a hole)
-  // A match is "on hole h" when completedHoles===h (next hole to play)
+  // A match's position = completedHoles (next unplayed hole)
   const holeMap = {};
   const doneMI = [];
 
   matches.forEach((m,i) => {
     const c = completedHoles[i];
-    if(c>=18){ doneMI.push({mi:i,label:"R1+R2"}); return; }
-    if(c===9){ doneMI.push({mi:i,label:"R1"}); return; }
+    if(c>=18){ doneMI.push({mi:i,label:"Fertig"}); return; }
     if(!holeMap[c]) holeMap[c]=[];
     holeMap[c].push(i);
   });
+  // Also track R1-done for badge row (completedHoles===9 means starting hole 10)
   matches.forEach((m,i) => {
     const c = completedHoles[i];
     if(c>=10&&c<18){ doneMI.push({mi:i,label:"R1 ✓"}); }
@@ -2029,7 +2074,31 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
     const idx=parseInt(role.split("-")[1]);const all=[];days.forEach(d=>d.matches.forEach(m=>all.push(m.id)));
     const perDay=days[0]?.matches.length||4;return[all[idx],all[idx+perDay]].filter(id=>id!==undefined);
   })();
-  const canEdit=id=>editableIds==="all"||editableIds.includes(id);
+
+  // Spieltag status-aware canEdit:
+  // - "pending" / "setup": only admin can edit
+  // - "active": normal editing based on role
+  // - "done": only admin can edit
+  const getDayStatus=dayId=>{
+    const d=days.find(d=>d.id===dayId);return d?.status||"active";
+  };
+  const canEdit=(matchId,dayId)=>{
+    const status=getDayStatus(dayId);
+    if(status==="active")return editableIds==="all"||editableIds.includes(matchId);
+    return isAdmin; // pending/setup/done → only admin
+  };
+
+  const startDay=async(dayId)=>{
+    setSaving(true);
+    const nd=days.map(d=>d.id===dayId?{...d,status:"active",startedAt:Date.now()}:d);
+    await saveTournament({...config,days:nd});setSaving(false);
+  };
+  const endDay=async(dayId)=>{
+    setSaving(true);
+    const nd=days.map(d=>d.id===dayId?{...d,status:"done",endedAt:Date.now()}:d);
+    await saveTournament({...config,days:nd});setSaving(false);
+  };
+
   const myMatchName=!isAdmin&&!isViewer?(()=>{const idx=parseInt(role.split("-")[1]);const all=[];days.forEach(d=>d.matches.forEach(m=>all.push(m.name)));return all[idx]||null;})():null;
 
   useEffect(()=>{if(!messaging)return;const u=onMessage(messaging,p=>{setToast({title:p.notification?.title,body:p.notification?.body});});return()=>u();},[]);
@@ -2147,11 +2216,56 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
               <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}><div><div style={{fontSize:"13px",fontWeight:"700",color:T.cream}}>{course.name}</div><div style={{fontSize:"11px",color:T.faint}}>{course.location}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:"10px",color:T.muted}}>Par</div><div style={{fontSize:"18px",fontWeight:"900",color:T.gold}}>{course.par.slice(0,9).reduce((a,b)=>a+b,0)} / {course.par.slice(9).reduce((a,b)=>a+b,0)}</div></div></div>
               {[0,1].map(r=>(<div key={r} style={{display:"grid",gridTemplateColumns:"repeat(9,1fr)",gap:"3px",marginBottom:r===0?"3px":"0"}}>{course.par.slice(r*9,r*9+9).map((p,i)=>(<div key={i} style={{textAlign:"center",fontSize:"9px",padding:"2px 0",borderRadius:"3px",background:T.holeBg,color:T.holeText}}><div style={{opacity:0.6}}>{r*9+i+1}</div><div style={{fontWeight:"700"}}>P{p}</div></div>))}</div>))}
             </div>
+
+            {/* Spieltag-Status Banner */}
+            {(()=>{
+              const st=activeDay.status||"active";
+              if(st==="pending"||st==="setup"){
+                return(
+                  <div style={{background:T.gold+"18",border:`1.5px solid ${T.gold}`,borderRadius:"10px",padding:"12px 14px",marginBottom:"12px",display:"flex",alignItems:"center",justifyContent:"space-between",gap:"10px"}}>
+                    <div>
+                      <div style={{fontSize:"12px",fontWeight:"700",color:T.gold}}>⏳ Spieltag noch nicht gestartet</div>
+                      <div style={{fontSize:"10px",color:T.faint,marginTop:"2px"}}>{st==="setup"?"Paarings noch nicht vollständig":"Scores können erst eingetragen werden"}</div>
+                    </div>
+                    {isAdmin&&st==="pending"&&activeDay.pairingsDone&&(
+                      <button onClick={()=>startDay(activeDay.id)} disabled={saving} style={{background:`linear-gradient(135deg,${T.gold},#A07830)`,border:"none",borderRadius:"8px",padding:"8px 14px",color:T.isDark?"#0D2B1A":"white",fontSize:"12px",fontWeight:"900",cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
+                        ▶ Starten
+                      </button>
+                    )}
+                    {isAdmin&&st==="setup"&&(
+                      <button onClick={()=>setPairingDay(activeDayIdx)} style={{background:T.blue+"22",border:`1px solid ${T.blue}`,borderRadius:"8px",padding:"8px 14px",color:T.blue,fontSize:"12px",fontWeight:"700",cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
+                        ✏️ Paarings
+                      </button>
+                    )}
+                  </div>
+                );
+              }
+              if(st==="done"){
+                return(
+                  <div style={{background:T.border+"33",border:`1.5px solid ${T.border}`,borderRadius:"10px",padding:"10px 14px",marginBottom:"12px",display:"flex",alignItems:"center",gap:"10px"}}>
+                    <div style={{fontSize:"16px"}}>🏁</div>
+                    <div style={{fontSize:"12px",color:T.muted,fontWeight:"700"}}>Spieltag beendet — Scores gesperrt</div>
+                    {isAdmin&&<div style={{fontSize:"10px",color:T.faint,marginLeft:"auto"}}>(Admin kann noch ändern)</div>}
+                  </div>
+                );
+              }
+              if(st==="active"&&isAdmin){
+                return(
+                  <div style={{display:"flex",justifyContent:"flex-end",marginBottom:"10px"}}>
+                    <button onClick={()=>endDay(activeDay.id)} disabled={saving} style={{background:"transparent",border:"1px solid #E05252",borderRadius:"8px",padding:"7px 14px",color:"#E05252",fontSize:"11px",cursor:"pointer",display:"flex",alignItems:"center",gap:"6px"}}>
+                      🏁 Spieltag beenden
+                    </button>
+                  </div>
+                );
+              }
+              return null;
+            })()}
+
             {activeDay.matches.map((m,mi)=>{
               const ref = matchCardRefs.current[mi] || (matchCardRefs.current[mi]=React.createRef());
               return(
                 <div key={m.id} ref={ref} style={{scrollMarginTop:"76px"}}>
-                  <MatchCard match={m} pars={course.par} t1Name={t1Name} t2Name={t2Name} canEdit={canEdit(m.id)} isAdmin={isAdmin} T={T} onHoleClick={(matchId,hi)=>setModal({dayId:activeDay.id,matchId,holeIndex:hi})} onReset={doReset}/>
+                  <MatchCard match={m} pars={course.par} t1Name={t1Name} t2Name={t2Name} canEdit={canEdit(m.id,activeDay.id)} isAdmin={isAdmin} T={T} onHoleClick={(matchId,hi)=>setModal({dayId:activeDay.id,matchId,holeIndex:hi})} onReset={doReset}/>
                 </div>
               );
             })}
