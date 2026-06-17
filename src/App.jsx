@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
-const VERSION = "2.02";
+const VERSION = "2.03";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLlzavBNImCRG0JacPZWdVIxezxKiqHcc",
@@ -143,6 +143,214 @@ const IconPlus=({size=16,color="currentColor"})=><svg width={size} height={size}
 const IconTrash=({size=16,color="currentColor"})=><svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg>;
 const IconCheck=({size=16,color="currentColor"})=><svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>;
 const IconArchive=({size=16,color="currentColor"})=><svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/></svg>;
+const IconExpand=({size=14,color="currentColor"})=><svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg>;
+const IconSend=({size=14,color="currentColor"})=><svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>;
+const IconBell=({size=14,color="currentColor"})=><svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>;
+
+// ── LiveChat (Firestore-backed) ────────────────────────────────────────────────
+const CHAT_PREFS_KEY="ryder_chat_prefs";
+const DEFAULT_PREFS={matchDecision:true,birdie:true,leadChange:true,halftime:true,equalize:false,everyHole:false};
+
+function useChatPrefs(){
+  const [prefs,setPrefs]=useState(()=>{try{const s=localStorage.getItem(CHAT_PREFS_KEY);return s?JSON.parse(s):DEFAULT_PREFS;}catch(e){return DEFAULT_PREFS;}});
+  const update=p=>{const n={...prefs,...p};setPrefs(n);try{localStorage.setItem(CHAT_PREFS_KEY,JSON.stringify(n));}catch(e){}};
+  return[prefs,update];
+}
+
+async function postChatMessage(msg){
+  try{await addDoc(collection(db,"liveChat"),{...msg,ts:Date.now()});}catch(e){}
+}
+
+function useChatMessages(){
+  const [msgs,setMsgs]=useState([]);
+  useEffect(()=>{
+    const q=query(collection(db,"liveChat"),orderBy("ts","asc"));
+    const unsub=onSnapshot(q,snap=>{setMsgs(snap.docs.map(d=>({id:d.id,...d.data()})));});
+    return()=>unsub();
+  },[]);
+  return msgs;
+}
+
+function ChatBubble({msg,role,isAdmin,T,onReact}){
+  const isSystem=msg.type==="system";
+  const isMe=msg.authorId==="me_"+role;
+  const EMOJI_LIST=["🔥","👏","😮","🎉","😂","👍"];
+  const [showPicker,setShowPicker]=useState(false);
+  const reactions=msg.reactions||{};
+
+  const typeColor={matchDecision:T.red,birdie:T.blue,leadChange:T.gold,halftime:T.muted,equalize:T.muted,everyHole:T.faint};
+  const typeBg={matchDecision:T.red+"18",birdie:T.blue+"18",leadChange:T.gold+"18",halftime:T.elevated,equalize:T.elevated,everyHole:T.elevated};
+
+  if(isSystem){
+    const bg=typeBg[msg.subtype]||T.elevated;
+    const border=typeColor[msg.subtype]||T.border;
+    return(
+      <div style={{marginBottom:"8px"}}>
+        <div style={{background:bg,border:`1px solid ${border}44`,borderLeft:`3px solid ${border}`,borderRadius:"0 8px 8px 0",padding:"7px 10px"}}>
+          <div style={{fontSize:"11px",color:T.cream,lineHeight:1.4}}>{msg.text}</div>
+          <div style={{fontSize:"9px",color:T.faint,marginTop:"3px"}}>{new Date(msg.ts).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})}</div>
+        </div>
+        <div style={{display:"flex",gap:"4px",marginTop:"4px",flexWrap:"wrap",paddingLeft:"4px"}}>
+          {Object.entries(reactions).map(([e,users])=>users.length>0&&(
+            <button key={e} onClick={()=>onReact(msg.id,e)} style={{background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"2px 7px",fontSize:"10px",cursor:"pointer",color:T.cream,display:"flex",alignItems:"center",gap:"3px"}}>
+              {e}<span style={{color:T.faint}}>{users.length}</span>
+            </button>
+          ))}
+          <div style={{position:"relative"}}>
+            <button onClick={()=>setShowPicker(p=>!p)} style={{background:"transparent",border:`1px solid ${T.border}44`,borderRadius:"12px",padding:"2px 7px",fontSize:"10px",cursor:"pointer",color:T.faint}}>+</button>
+            {showPicker&&(
+              <div style={{position:"absolute",bottom:"24px",left:0,background:T.surface,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"6px",display:"flex",gap:"4px",zIndex:20,boxShadow:"0 4px 16px rgba(0,0,0,0.3)"}}>
+                {EMOJI_LIST.map(e=><button key={e} onClick={()=>{onReact(msg.id,e);setShowPicker(false);}} style={{background:"none",border:"none",fontSize:"16px",cursor:"pointer",padding:"2px 3px"}}>{e}</button>)}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return(
+    <div style={{display:"flex",flexDirection:"column",alignItems:isMe?"flex-end":"flex-start",marginBottom:"8px"}}>
+      {!isMe&&<div style={{fontSize:"9px",color:T.faint,marginBottom:"2px",paddingLeft:"4px"}}>{msg.author}</div>}
+      <div style={{maxWidth:"80%",background:isMe?T.gold:T.elevated,border:`1px solid ${isMe?T.gold+"55":T.border}`,borderRadius:isMe?"12px 12px 2px 12px":"12px 12px 12px 2px",padding:"8px 10px"}}>
+        <div style={{fontSize:"12px",color:isMe?T.isDark?"#0D2B1A":T.cream:T.cream,lineHeight:1.4}}>{msg.text}</div>
+        <div style={{fontSize:"9px",color:isMe?T.isDark?"#0D2B1A44":"rgba(255,255,255,0.5)":T.faint,marginTop:"3px",textAlign:isMe?"right":"left"}}>{new Date(msg.ts).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})}</div>
+      </div>
+    </div>
+  );
+}
+
+function NotifSettings({prefs,onUpdate,T}){
+  const rows=[
+    {key:"matchDecision",label:"Match-Entscheidungen",sub:"4&3, 1UP, Runde gewonnen"},
+    {key:"birdie",label:"Birdie & Eagle",sub:"Besondere Schläge"},
+    {key:"leadChange",label:"Lead-Wechsel",sub:"Wenn Führung wechselt"},
+    {key:"halftime",label:"Halbzeit-Zusammenfassung",sub:"Nach Runde 1"},
+    {key:"equalize",label:"Ausgleich (AS)",sub:"Wenn Match gleichsteht"},
+    {key:"everyHole",label:"Jedes Loch-Ergebnis",sub:"Alle Scores in Echtzeit"},
+  ];
+  return(
+    <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"10px",padding:"12px 14px",marginBottom:"10px"}}>
+      <div style={{fontSize:"10px",color:T.gold,letterSpacing:"1px",fontWeight:"700",marginBottom:"10px",display:"flex",alignItems:"center",gap:"6px"}}><IconBell size={12} color={T.gold}/>BENACHRICHTIGUNGEN</div>
+      {rows.map(r=>(
+        <div key={r.key} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${T.border}33`}}>
+          <div><div style={{fontSize:"12px",color:T.cream}}>{r.label}</div><div style={{fontSize:"10px",color:T.faint}}>{r.sub}</div></div>
+          <div onClick={()=>onUpdate({[r.key]:!prefs[r.key]})}
+            style={{width:"36px",height:"20px",borderRadius:"10px",background:prefs[r.key]?T.gold:T.border,cursor:"pointer",position:"relative",transition:"background 0.2s",flexShrink:0}}>
+            <div style={{position:"absolute",top:"3px",left:prefs[r.key]?"18px":"3px",width:"14px",height:"14px",borderRadius:"50%",background:"white",transition:"left 0.2s"}}/>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function LiveChat({role,T,mini=true,onExpand}){
+  const msgs=useChatMessages();
+  const [prefs,updatePrefs]=useChatPrefs();
+  const [text,setText]=useState("");
+  const [showSettings,setShowSettings]=useState(false);
+  const scrollRef=useRef(null);
+  const isAdmin=role==="admin";
+  const isViewer=role==="viewer";
+  const canWrite=isAdmin||isViewer;
+  const authorLabel=isAdmin?"👑 Admin":isViewer?"👁 Zuschauer":`⛳ Match ${parseInt(role.split("-")[1])+1}`;
+
+  // Filter by prefs
+  const visible=msgs.filter(m=>{
+    if(m.type!=="system")return true;
+    return prefs[m.subtype]!==false;
+  });
+
+  useEffect(()=>{
+    if(scrollRef.current&&!mini){
+      scrollRef.current.scrollTop=scrollRef.current.scrollHeight;
+    }
+  },[visible.length,mini]);
+
+  const send=async()=>{
+    if(!text.trim()||!canWrite)return;
+    await postChatMessage({type:"user",author:authorLabel,authorId:"me_"+role,text:text.trim()});
+    setText("");
+  };
+
+  const react=async(msgId,emoji)=>{
+    const msg=msgs.find(m=>m.id===msgId);if(!msg)return;
+    const reactions={...msg.reactions||{}};
+    const users=reactions[emoji]||[];
+    const uid="me_"+role;
+    reactions[emoji]=users.includes(uid)?users.filter(u=>u!==uid):[...users,uid];
+    try{await setDoc(doc(db,"liveChat",msgId),{reactions},{merge:true});}catch(e){}
+  };
+
+  const unreadCount=visible.filter(m=>m.type==="system").length;
+
+  // ── Mini View ──────────────────────────────────────────────────────────────
+  if(mini){
+    const last3=visible.slice(-3);
+    return(
+      <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"10px",marginBottom:"14px",overflow:"hidden"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",borderBottom:`1px solid ${T.border}33`,background:T.isDark?"#0A2014":T.elevated}}>
+          <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
+            <div style={{width:"6px",height:"6px",borderRadius:"50%",background:"#4CAF50"}}/>
+            <span style={{fontSize:"10px",color:T.gold,fontWeight:"700",letterSpacing:"1px"}}>💬 LIVE CHAT</span>
+          </div>
+          <button onClick={onExpand} style={{background:"transparent",border:`1px solid ${T.border}`,borderRadius:"6px",padding:"4px 8px",color:T.muted,cursor:"pointer",display:"flex",alignItems:"center",gap:"4px",fontSize:"10px"}}>
+            <IconExpand size={11} color={T.muted}/>Öffnen
+          </button>
+        </div>
+        <div style={{padding:"8px 12px",maxHeight:"140px",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+          {last3.length===0&&<div style={{fontSize:"11px",color:T.faint,textAlign:"center",padding:"12px 0"}}>Noch keine Nachrichten</div>}
+          {last3.map(m=><ChatBubble key={m.id} msg={m} role={role} isAdmin={isAdmin} T={T} onReact={react}/>)}
+        </div>
+        {canWrite&&(
+          <div style={{display:"flex",gap:"6px",padding:"6px 10px",borderTop:`1px solid ${T.border}33`}}>
+            <input value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} placeholder="Kommentar..." style={{flex:1,background:T.isDark?"#0A2014":T.elevated,border:`1px solid ${T.border}`,borderRadius:"6px",color:T.cream,fontSize:"12px",padding:"6px 10px",outline:"none"}}/>
+            <button onClick={send} style={{background:T.gold,border:"none",borderRadius:"6px",padding:"6px 10px",cursor:"pointer",display:"flex",alignItems:"center"}}><IconSend size={12} color={T.isDark?"#0D2B1A":"white"}/></button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Full View (Chat Tab) ───────────────────────────────────────────────────
+  return(
+    <div style={{display:"flex",flexDirection:"column",gap:"10px"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div style={{fontSize:"10px",color:T.gold,letterSpacing:"1px",fontWeight:"700"}}>💬 LIVE CHAT · {unreadCount} SYSTEM-EVENTS</div>
+        <button onClick={()=>setShowSettings(s=>!s)} style={{background:"transparent",border:`1px solid ${T.border}`,borderRadius:"6px",padding:"5px 10px",color:showSettings?T.gold:T.muted,cursor:"pointer",fontSize:"10px",display:"flex",alignItems:"center",gap:"4px"}}>
+          <IconBell size={11} color={showSettings?T.gold:T.muted}/>Einstellungen
+        </button>
+      </div>
+
+      {showSettings&&<NotifSettings prefs={prefs} onUpdate={updatePrefs} T={T}/>}
+
+      <div ref={scrollRef} style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"10px",padding:"10px 12px",height:"420px",overflowY:"auto",WebkitOverflowScrolling:"touch",display:"flex",flexDirection:"column",justifyContent:visible.length<6?"flex-end":"flex-start"}}>
+        {visible.length===0&&(
+          <div style={{textAlign:"center",padding:"40px 20px"}}>
+            <div style={{fontSize:"32px",marginBottom:"8px"}}>💬</div>
+            <div style={{fontSize:"13px",color:T.gold,marginBottom:"4px"}}>Noch keine Nachrichten</div>
+            <div style={{fontSize:"11px",color:T.faint}}>System-Events erscheinen hier sobald Scores eingetragen werden.</div>
+          </div>
+        )}
+        {visible.map(m=><ChatBubble key={m.id} msg={m} role={role} isAdmin={isAdmin} T={T} onReact={react}/>)}
+      </div>
+
+      {canWrite?(
+        <div style={{display:"flex",gap:"8px"}}>
+          <input value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>e.key==="Enter"&&send()} placeholder={`Schreiben als ${authorLabel}...`} style={{flex:1,background:T.surface,border:`1px solid ${T.border}`,borderRadius:"8px",color:T.cream,fontSize:"13px",padding:"10px 14px",outline:"none"}}/>
+          <button onClick={send} style={{background:`linear-gradient(135deg,${T.gold},#A07830)`,border:"none",borderRadius:"8px",padding:"10px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:"6px",fontSize:"12px",fontWeight:"700",color:T.isDark?"#0D2B1A":"white"}}>
+            <IconSend size={14} color={T.isDark?"#0D2B1A":"white"}/>
+          </button>
+        </div>
+      ):(
+        <div style={{background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 14px",textAlign:"center",fontSize:"11px",color:T.faint}}>
+          👁 Als Spieler kannst du reagieren aber nicht schreiben — fokussier dich aufs Spiel!
+        </div>
+      )}
+    </div>
+  );
+}
 
 // ── Theme Toggle (sun/moon) ───────────────────────────────────────────────────
 function ThemeToggle({theme,onToggle}){
@@ -1696,14 +1904,54 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
     setSaving(true);
     const nd=days.map(day=>{if(day.id!==dayId)return day;return{...day,matches:day.matches.map(m=>{if(m.id!==matchId)return m;const ns=[...m.scores];ns[hi]={team1:t1s,team2:t2s};return{...m,scores:ns};})};});
     const change=detectPointChange(days,nd,t1Name,t2Name);if(change)await sendPushToAll(change.title,change.body,change.key);
+
+    // ── System Chat Events ──────────────────────────────────────────────────
+    const day=nd.find(d=>d.id===dayId);
+    const match=day?.matches.find(m=>m.id===matchId);
+    const course=day?COURSES[day.courseKey]||Object.values(COURSES)[0]:null;
+    if(match&&course){
+      const par=course.par[hi];
+      const holeNum=hi+1;
+      const matchName=match.name||`Match`;
+      // Birdie or Eagle
+      const best=Math.min(t1s,t2s);
+      if(best<=par-2){
+        const label=best<=par-3?"🦅 Eagle":"🐦 Birdie";
+        await postChatMessage({type:"system",subtype:"birdie",text:`${label} auf Loch ${holeNum} (${best} vs Par ${par}) — ${matchName}`,ts:Date.now()});
+      }
+      // Round decision
+      const roundIdx=hi<9?0:1;const rs=calcRoundStatus(match.scores,course.par,roundIdx*9,roundIdx*9+9);
+      const prevMatch=days.find(d=>d.id===dayId)?.matches.find(m=>m.id===matchId);
+      const prevRs=prevMatch?calcRoundStatus(prevMatch.scores,course.par,roundIdx*9,roundIdx*9+9):null;
+      if(rs.won&&!prevRs?.won){
+        const winner=rs.diff>0?t1Name:rs.diff<0?t2Name:null;
+        await postChatMessage({type:"system",subtype:"matchDecision",text:`🏆 ${matchName} · Runde ${roundIdx+1} entschieden: ${winner?winner+" gewinnt":""} ${rs.label}`,ts:Date.now()});
+      }
+      // Lead change
+      const prevDiff=prevMatch?prevMatch.scores.slice(0,hi).reduce((acc,s)=>{if(s.team1===null)return acc;return acc+(s.team1<s.team2?1:s.team2<s.team1?-1:0);},0):0;
+      const newDiff=match.scores.slice(0,hi+1).reduce((acc,s)=>{if(s.team1===null)return acc;return acc+(s.team1<s.team2?1:s.team2<s.team1?-1:0);},0);
+      if((prevDiff>0&&newDiff<0)||(prevDiff<0&&newDiff>0)){
+        const leader=newDiff>0?t1Name:t2Name;
+        await postChatMessage({type:"system",subtype:"leadChange",text:`🔄 Führungswechsel in ${matchName} nach Loch ${holeNum} — ${leader} übernimmt die Führung`,ts:Date.now()});
+      } else if(prevDiff!==0&&newDiff===0&&!rs.won){
+        await postChatMessage({type:"system",subtype:"equalize",text:`🤝 ${matchName} · Ausgleich auf Loch ${holeNum} — jetzt AS`,ts:Date.now()});
+      }
+      // Halftime: when hole 9 just completed
+      if(hi===8){
+        const r1=calcRoundStatus(match.scores,course.par,0,9);
+        const pts=getPoints(r1);
+        if(pts){await postChatMessage({type:"system",subtype:"halftime",text:`📊 Halbzeit ${matchName}: ${r1.label} — ${pts.t1>pts.t2?t1Name:pts.t2>pts.t1?t2Name:"Unentschieden"} gewinnt Runde 1`,ts:Date.now()});}
+      }
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     await saveTournament({...config,days:nd});setSaving(false);
-    // Auto-advance: after hole 9 (index 8) → open hole 10 (index 9)
     if(hi===8){setModal({dayId,matchId,holeIndex:9});}
     else{setModal(null);}
   };
 
   const dayTabs=days.map((d,i)=>({key:`day${i}`,label:`Spieltag ${i+1}`}));
-  const tabs=[...dayTabs,{key:"stats",label:"Statistik",icon:<IconChart size={11} color="currentColor"/>}];
+  const tabs=[...dayTabs,{key:"stats",label:"Statistik",icon:<IconChart size={11} color="currentColor"/>},{key:"chat",label:"Chat",icon:<IconBell size={11} color="currentColor"/>}];
   const activeDayIdx=dayTabs.findIndex(t=>t.key===activeTab);
   const activeDay=activeDayIdx>=0?days[activeDayIdx]:null;
   const course=activeDay?COURSES[activeDay.courseKey]||Object.values(COURSES)[0]:null;
@@ -1747,10 +1995,13 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
           />
         )}
 
+        <LiveChat role={role} T={T} mini={true} onExpand={()=>setActiveTab("chat")}/>
+
         <div style={{display:"flex",marginBottom:"14px",borderRadius:"8px",overflow:"hidden",border:`1px solid ${T.border}`}}>
           {tabs.map((tab,i)=>(<button key={tab.key} style={{flex:1,padding:"10px 4px",background:activeTab===tab.key?T.elevated:T.isDark?"#0A2014":T.bg,border:"none",borderLeft:i>0?`1px solid ${T.border}`:"none",color:activeTab===tab.key?T.gold:T.muted,cursor:"pointer",fontSize:"10px",letterSpacing:"0.5px",textTransform:"uppercase",fontWeight:activeTab===tab.key?"700":"400",display:"flex",alignItems:"center",justifyContent:"center",gap:"4px"}} onClick={()=>setActiveTab(tab.key)}>{tab.icon}{tab.label}</button>))}
         </div>
 
+        {activeTab==="chat"&&<LiveChat role={role} T={T} mini={false}/>}
         {activeTab==="stats"&&<StatsTab days={days} t1Name={t1Name} t2Name={t2Name} T={T}/>}
         {activeDay&&course&&(
           <>
