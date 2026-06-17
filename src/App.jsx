@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
-const VERSION = "2.07";
+const VERSION = "2.09";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLlzavBNImCRG0JacPZWdVIxezxKiqHcc",
@@ -1306,48 +1306,100 @@ function PairingEditor({config,dayIdx,onSave,onClose,T}){
 // DASHBOARD COMPONENTS
 // ══════════════════════════════════════════════════════════════════════════════
 function ScoreModal({match,holeIndex,t1Name,t2Name,existing,par,onSave,onClose,T}){
-  const [t1,setT1]=useState(existing?.team1??"");
-  const [t2,setT2]=useState(existing?.team2??"");
-  const hp=par[holeIndex];const mode=GAME_MODES[match.mode||"scramble"];
+  const hp=par[holeIndex];
+  const mode=GAME_MODES[match.mode||"scramble"];
   const t1Photos=match.t1Photos||{};const t2Photos=match.t2Photos||{};
   const t1PlayerIds=match.t1PlayerIds||[];const t2PlayerIds=match.t2PlayerIds||[];
   const isRound2Start=holeIndex===9;
   const isRound1=holeIndex<9;
+
+  // Default to par if no existing score
+  const [t1,setT1]=useState(existing?.team1??hp);
+  const [t2,setT2]=useState(existing?.team2??hp);
+
+  const golfLabel=(score,p)=>{
+    const diff=score-p;
+    if(diff<=-3)return{label:"Albatross 🦅🦅",color:"#FFD700"};
+    if(diff===-2)return{label:"Eagle 🦅",color:"#FFD700"};
+    if(diff===-1)return{label:"Birdie 🐦",color:"#4CAF50"};
+    if(diff===0)return{label:"Par ⬜",color:T.muted};
+    if(diff===1)return{label:"Bogey 🔴",color:"#FF9800"};
+    if(diff===2)return{label:"Doppelbogey 💀",color:"#E05252"};
+    return{label:`+${diff} ☠️`,color:"#B71C1C"};
+  };
+
+  const ScoreStepper=({val,setVal,color,pair,playerIds,photos,teamName})=>{
+    const {label,color:lcolor}=golfLabel(val,hp);
+    return(
+      <div style={{flex:1,textAlign:"center"}}>
+        <div style={{fontSize:"11px",color,letterSpacing:"1px",textTransform:"uppercase",marginBottom:"6px",fontWeight:"700"}}>{teamName}</div>
+        <div style={{display:"flex",justifyContent:"center",gap:"4px",marginBottom:"4px"}}>
+          {pair.map((name,pi)=>{const pid=playerIds[pi];const photo=pid?photos[pid]:null;return<PlayerAvatar key={pi} name={name} size={28} color={color} photo={photo}/>;} )}
+        </div>
+        <div style={{fontSize:"10px",color,fontWeight:"600",marginBottom:"10px",lineHeight:1.2}}>{pair.join(" & ")}</div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:"0"}}>
+          <button
+            onClick={()=>setVal(v=>Math.max(1,v-1))}
+            style={{width:"44px",height:"64px",fontSize:"24px",fontWeight:"900",background:T.isDark?"#0A1F10":T.elevated,border:`2px solid ${T.border}`,borderRadius:"8px 0 0 8px",color:T.blue,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",userSelect:"none"}}>
+            −
+          </button>
+          <div style={{width:"60px",height:"64px",background:T.isDark?"#060E1A":T.elevated,border:`2px solid ${color}`,borderTop:`2px solid ${color}`,borderBottom:`2px solid ${color}`,display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <div style={{fontSize:"36px",fontWeight:"900",color:T.cream,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{val}</div>
+          </div>
+          <button
+            onClick={()=>setVal(v=>Math.min(12,v+1))}
+            style={{width:"44px",height:"64px",fontSize:"24px",fontWeight:"900",background:T.isDark?"#0A1F10":T.elevated,border:`2px solid ${T.border}`,borderRadius:"0 8px 8px 0",color:T.red,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",userSelect:"none"}}>
+            +
+          </button>
+        </div>
+        <div style={{fontSize:"11px",fontWeight:"700",color:lcolor,marginTop:"6px",height:"18px"}}>{label}</div>
+      </div>
+    );
+  };
+
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:100}} onClick={onClose}>
-      <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"16px 16px 0 0",padding:"22px 18px 30px",width:"100%",maxWidth:"480px"}} onClick={e=>e.stopPropagation()}>
-        <div style={{width:"36px",height:"4px",background:T.border,borderRadius:"2px",margin:"0 auto 16px"}}/>
+      <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"16px 16px 0 0",padding:"16px 18px 30px",width:"100%",maxWidth:"480px"}} onClick={e=>e.stopPropagation()}>
+        <div style={{width:"36px",height:"4px",background:T.border,borderRadius:"2px",margin:"0 auto 14px"}}/>
 
-        {/* Round 2 transition banner */}
+        {/* Round 2 banner */}
         {isRound2Start&&(
-          <div style={{background:`linear-gradient(135deg,${T.gold}33,${T.gold}11)`,border:`2px solid ${T.gold}`,borderRadius:"10px",padding:"10px 14px",marginBottom:"14px",textAlign:"center"}}>
-            <div style={{fontSize:"18px",marginBottom:"2px"}}>🏁➡️🏌️</div>
-            <div style={{fontSize:"14px",fontWeight:"900",color:T.gold,letterSpacing:"1px"}}>RUNDE 2 BEGINNT!</div>
-            <div style={{fontSize:"10px",color:T.faint,marginTop:"2px"}}>Löcher 10–18 · Neue Runde, neue Punkte</div>
+          <div style={{background:`linear-gradient(135deg,${T.gold}33,${T.gold}11)`,border:`2px solid ${T.gold}`,borderRadius:"10px",padding:"8px 14px",marginBottom:"12px",textAlign:"center"}}>
+            <div style={{fontSize:"13px",fontWeight:"900",color:T.gold,letterSpacing:"1px"}}>🏁➡️🏌️ RUNDE 2 BEGINNT!</div>
+            <div style={{fontSize:"10px",color:T.faint}}>Löcher 10–18 · Neue Runde, neue Punkte</div>
           </div>
         )}
 
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"14px"}}>
+        {/* Header: LOCH big, match small */}
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"14px"}}>
           <div>
-            <div style={{fontSize:"15px",fontWeight:"900",color:T.gold,textTransform:"uppercase",letterSpacing:"1px"}}>Loch {holeIndex+1} · {match.name}</div>
-            <div style={{fontSize:"11px",color:isRound1?T.muted:T.gold,marginTop:"2px",fontWeight:isRound1?"400":"700"}}>
-              {isRound1?"Runde 1 · L. 1–9":"⛳ Runde 2 · L. 10–18"} · {mode?.icon} {mode?.label}
+            <div style={{fontSize:"28px",fontWeight:"900",color:T.gold,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>
+              LOCH {holeIndex+1}
+            </div>
+            <div style={{fontSize:"11px",color:T.faint,marginTop:"2px"}}>
+              {match.name} · {isRound1?"Runde 1":"Runde 2"} · {mode?.icon} {mode?.label}
             </div>
           </div>
-          <div style={{textAlign:"center",background:isRound2Start?T.gold+"22":T.elevated,border:`1px solid ${isRound2Start?T.gold:T.border}`,borderRadius:"8px",padding:"6px 12px"}}><div style={{fontSize:"9px",color:T.muted}}>PAR</div><div style={{fontSize:"22px",fontWeight:"900",color:T.gold,lineHeight:1}}>{hp}</div></div>
+          <div style={{textAlign:"center",background:isRound2Start?T.gold+"22":T.elevated,border:`1.5px solid ${isRound2Start?T.gold:T.border}`,borderRadius:"8px",padding:"6px 14px"}}>
+            <div style={{fontSize:"9px",color:T.muted,letterSpacing:"1px"}}>PAR</div>
+            <div style={{fontSize:"26px",fontWeight:"900",color:T.gold,lineHeight:1}}>{hp}</div>
+          </div>
         </div>
-        <div style={{display:"flex",gap:"12px",marginBottom:"16px"}}>
-          {[{name:t1Name,val:t1,set:setT1,color:T.blue,pair:match.t1Pair||[],playerIds:t1PlayerIds,photos:t1Photos},{name:t2Name,val:t2,set:setT2,color:T.red,pair:match.t2Pair||[],playerIds:t2PlayerIds,photos:t2Photos}].map((item,i)=>(
-            <div key={i} style={{flex:1,textAlign:"center"}}>
-              <div style={{fontSize:"11px",color:item.color,letterSpacing:"1px",textTransform:"uppercase",marginBottom:"6px"}}>{item.name}</div>
-              <div style={{display:"flex",justifyContent:"center",gap:"4px",marginBottom:"6px"}}>{item.pair.map((name,pi)=>{const pid=item.playerIds[pi];const photo=pid?item.photos[pid]:null;return<PlayerAvatar key={pi} name={name} size={32} color={item.color} photo={photo}/>;})}</div>
-              <div style={{fontSize:"11px",color:item.color,fontWeight:"600",marginBottom:"6px"}}>{item.pair.join(" & ")}</div>
-              <input type="number" min="1" max="12" style={{width:"100%",fontSize:"36px",fontWeight:"900",background:T.isDark?"#060E1A":T.elevated,border:`2px solid ${isRound2Start?T.gold:T.border}`,borderRadius:"8px",color:T.cream,textAlign:"center",padding:"8px 0",outline:"none",boxSizing:"border-box"}} value={item.val} onChange={e=>item.set(e.target.value)} autoFocus={i===0}/>
-            </div>
-          ))}
+
+        {/* Steppers */}
+        <div style={{display:"flex",gap:"16px",marginBottom:"18px"}}>
+          <ScoreStepper val={t1} setVal={setT1} color={T.blue} pair={match.t1Pair||[]} playerIds={t1PlayerIds} photos={t1Photos} teamName={t1Name}/>
+          <div style={{width:"1px",background:T.border,margin:"0 4px"}}/>
+          <ScoreStepper val={t2} setVal={setT2} color={T.red} pair={match.t2Pair||[]} playerIds={t2PlayerIds} photos={t2Photos} teamName={t2Name}/>
         </div>
-        <button style={{width:"100%",padding:"13px",background:`linear-gradient(135deg,${T.gold},#A07830)`,border:"none",borderRadius:"8px",color:T.isDark?"#0D2B1A":"white",fontSize:"14px",fontWeight:"900",letterSpacing:"2px",cursor:"pointer"}} onClick={()=>{if(t1!==""&&t2!=="")onSave(Number(t1),Number(t2));}}>Speichern</button>
-        <button style={{width:"100%",padding:"10px",background:"transparent",border:`1px solid ${T.border}`,borderRadius:"8px",color:T.muted,fontSize:"13px",cursor:"pointer",marginTop:"8px"}} onClick={onClose}>Abbrechen</button>
+
+        <button style={{width:"100%",padding:"14px",background:`linear-gradient(135deg,${T.gold},#A07830)`,border:"none",borderRadius:"8px",color:T.isDark?"#0D2B1A":"white",fontSize:"15px",fontWeight:"900",letterSpacing:"2px",cursor:"pointer"}}
+          onClick={()=>onSave(t1,t2)}>
+          Speichern
+        </button>
+        <button style={{width:"100%",padding:"10px",background:"transparent",border:`1px solid ${T.border}`,borderRadius:"8px",color:T.muted,fontSize:"13px",cursor:"pointer",marginTop:"8px"}} onClick={onClose}>
+          Abbrechen
+        </button>
       </div>
     </div>
   );
@@ -2254,7 +2306,7 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
           />
         )}
 
-        {activeTab!=="chat"&&<LiveChat role={role} T={T} mini={true} onExpand={()=>setActiveTab("chat")}/>}
+        {/* Mini-Chat removed — access via Chat tab only */}
 
         <div style={{display:"flex",marginBottom:"14px",borderRadius:"8px",overflow:"hidden",border:`1px solid ${T.border}`}}>
           {tabs.map((tab,i)=>(<button key={tab.key} style={{flex:1,padding:"10px 4px",background:activeTab===tab.key?T.elevated:T.isDark?"#0A2014":T.bg,border:"none",borderLeft:i>0?`1px solid ${T.border}`:"none",color:activeTab===tab.key?T.gold:T.muted,cursor:"pointer",fontSize:"10px",letterSpacing:"0.5px",textTransform:"uppercase",fontWeight:activeTab===tab.key?"700":"400",display:"flex",alignItems:"center",justifyContent:"center",gap:"4px"}} onClick={()=>setActiveTab(tab.key)}>{tab.icon}{tab.label}</button>))}
@@ -2284,10 +2336,7 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
         {activeTab==="stats"&&<StatsTab days={days} t1Name={t1Name} t2Name={t2Name} T={T} captainT1={config.captainT1} captainT2={config.captainT2} allPlayers={[...(config.t1Players||[]),...(config.t2Players||[])]}/>}
         {activeDay&&course&&(
           <>
-            <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"12px"}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}><div><div style={{fontSize:"13px",fontWeight:"700",color:T.cream}}>{course.name}</div><div style={{fontSize:"11px",color:T.faint}}>{course.location}</div></div><div style={{textAlign:"right"}}><div style={{fontSize:"10px",color:T.muted}}>Par</div><div style={{fontSize:"18px",fontWeight:"900",color:T.gold}}>{course.par.slice(0,9).reduce((a,b)=>a+b,0)} / {course.par.slice(9).reduce((a,b)=>a+b,0)}</div></div></div>
-              {[0,1].map(r=>(<div key={r} style={{display:"grid",gridTemplateColumns:"repeat(9,1fr)",gap:"3px",marginBottom:r===0?"3px":"0"}}>{course.par.slice(r*9,r*9+9).map((p,i)=>(<div key={i} style={{textAlign:"center",fontSize:"9px",padding:"2px 0",borderRadius:"3px",background:T.holeBg,color:T.holeText}}><div style={{opacity:0.6}}>{r*9+i+1}</div><div style={{fontWeight:"700"}}>P{p}</div></div>))}</div>))}
-            </div>
+            {/* Course par overview removed for cleaner UI */}
 
             {/* Spieltag-Status Banner */}
             {(()=>{
@@ -2333,14 +2382,32 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
               return null;
             })()}
 
-            {activeDay.matches.map((m,mi)=>{
-              const ref = matchCardRefs.current[mi] || (matchCardRefs.current[mi]=React.createRef());
-              return(
-                <div key={m.id} ref={ref} style={{scrollMarginTop:"76px"}}>
-                  <MatchCard match={m} pars={course.par} t1Name={t1Name} t2Name={t2Name} canEdit={canEdit(m.id,activeDay.id)} isAdmin={isAdmin} T={T} captainT1={config.captainT1} captainT2={config.captainT2} onHoleClick={(matchId,hi)=>setModal({dayId:activeDay.id,matchId,holeIndex:hi})} onReset={doReset}/>
-                </div>
-              );
-            })}
+            {(()=>{
+              // Sort: player's own match first, rest follow
+              const myMatchIds = editableIds==="all"?[]:editableIds;
+              const sorted=[...activeDay.matches].sort((a,b)=>{
+                const aOwn=myMatchIds.includes(a.id)?0:1;
+                const bOwn=myMatchIds.includes(b.id)?0:1;
+                return aOwn-bOwn;
+              });
+              return sorted.map((m,mi)=>{
+                const origIdx=activeDay.matches.findIndex(x=>x.id===m.id);
+                const ref = matchCardRefs.current[origIdx] || (matchCardRefs.current[origIdx]=React.createRef());
+                const isMyMatch=myMatchIds.includes(m.id);
+                return(
+                  <div key={m.id} ref={ref}
+                    style={{
+                      scrollMarginTop:"76px",
+                      ...(isMyMatch&&!isAdmin?{
+                        position:"sticky",top:"60px",zIndex:10,
+                        filter:"drop-shadow(0 4px 12px rgba(0,0,0,0.4))"
+                      }:{})
+                    }}>
+                    <MatchCard match={m} pars={course.par} t1Name={t1Name} t2Name={t2Name} canEdit={canEdit(m.id,activeDay.id)} isAdmin={isAdmin} T={T} captainT1={config.captainT1} captainT2={config.captainT2} onHoleClick={(matchId,hi)=>setModal({dayId:activeDay.id,matchId,holeIndex:hi})} onReset={doReset}/>
+                  </div>
+                );
+              });
+            })()}
             {isAdmin&&(<>
               <button style={{width:"100%",padding:"12px",background:"transparent",border:`1px solid ${T.blue}55`,borderRadius:"8px",color:T.blue,fontSize:"12px",cursor:"pointer",marginTop:"4px",display:"flex",alignItems:"center",justifyContent:"center",gap:"8px"}} onClick={()=>setPairingDay(activeDayIdx)}>✏️ Paarings Tag {activeDayIdx+1} ändern</button>
               <button style={{width:"100%",padding:"12px",background:"transparent",border:"1px solid #E05252",borderRadius:"8px",color:"#E05252",fontSize:"12px",cursor:"pointer",marginTop:"8px",display:"flex",alignItems:"center",justifyContent:"center",gap:"8px"}} onClick={()=>setResetAll(true)}><IconReset size={14} color="#E05252"/> Alle Matches zurücksetzen</button>
