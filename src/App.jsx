@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
-const VERSION = "2.11";
+const VERSION = "2.12";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLlzavBNImCRG0JacPZWdVIxezxKiqHcc",
@@ -55,22 +55,19 @@ const GAME_MODES = {
   fourball:{label:"Four-Ball",icon:"⛳",desc:"Bester Ball zählt",pairs:true},
 };
 
-function calcRoundStatus(scores,pars,s,e){
+function calcRoundStatus(scores,pars,s,e,mode){
   let diff=0,played=0,won=false,decisionAt=null;
   for(let i=s;i<e;i++){
     const h=scores[i];
-    if(h.team1!==null&&h.team2!==null){
-      // Only count this hole if match not yet decided
+    const {t1,t2}=effectiveScores(h,mode);
+    if(t1!==null&&t2!==null){
       if(!won){
         played++;
-        if(h.team1<h.team2)diff++;else if(h.team2<h.team1)diff--;
+        if(t1<t2)diff++;else if(t2<t1)diff--;
         const left=e-s-played;
-        // Check if match is decided after this hole
         if(Math.abs(diff)>left){won=true;decisionAt=i;}
         else if(left===0){won=true;decisionAt=i;}
-      }
-      // Dead hole: already decided — count as played for UI but don't affect score
-      else{played++;}
+      } else{played++;}
     }
   }
   const left=e-s-played;
@@ -87,7 +84,7 @@ function calcTournament(days,numDays,matchesPerDay){
   // Count confirmed days
   days.forEach(day=>{
     const c=COURSES[day.courseKey]||Object.values(COURSES)[0];
-    day.matches.forEach(m=>{total+=2;[0,1].forEach(r=>{const rs=calcRoundStatus(m.scores,c.par,r*9,r*9+9);const conf=getPoints(rs),proj=projectedPoints(rs);if(conf){t1c+=conf.t1;t2c+=conf.t2;}t1p+=proj.t1;t2p+=proj.t2;});});
+    day.matches.forEach(m=>{total+=2;[0,1].forEach(r=>{const rs=calcRoundStatus(m.scores,c.par,r*9,r*9+9,m.mode);const conf=getPoints(rs),proj=projectedPoints(rs);if(conf){t1c+=conf.t1;t2c+=conf.t2;}t1p+=proj.t1;t2p+=proj.t2;});});
   });
   // Fix 1: total possible points = numDays × matchesPerDay × 2 rounds
   const nd=numDays||days.length;
@@ -97,7 +94,22 @@ function calcTournament(days,numDays,matchesPerDay){
   const s=t1p+t2p;
   return{t1Confirmed:t1c,t2Confirmed:t2c,t1Projected:Math.round(t1p*10)/10,t2Projected:Math.round(t2p*10)/10,t1WinProb:s>0?Math.round((t1p/s)*100):50,t2WinProb:s>0?Math.round((t2p/s)*100):50,totalPoints:totalPossible,needed};
 }
-function emptyScores(){return Array.from({length:18},()=>({team1:null,team2:null}));}
+function emptyScores(){return Array.from({length:18},()=>({team1:null,team2:null,p1a:null,p1b:null,p2a:null,p2b:null}));}
+
+// Mode-aware: get effective team scores for a hole
+// Fourball: best ball of each pair; Singles: direct 1v1
+function effectiveScores(hole,mode){
+  if(!hole)return{t1:null,t2:null};
+  if(mode==="fourball"){
+    const t1=hole.p1a!==null&&hole.p1b!==null?Math.min(hole.p1a,hole.p1b):hole.p1a!==null?hole.p1a:hole.p1b!==null?hole.p1b:hole.team1;
+    const t2=hole.p2a!==null&&hole.p2b!==null?Math.min(hole.p2a,hole.p2b):hole.p2a!==null?hole.p2a:hole.p2b!==null?hole.p2b:hole.team2;
+    return{t1,t2};
+  }
+  if(mode==="singles"){
+    return{t1:hole.p1a!==null?hole.p1a:hole.team1,t2:hole.p2a!==null?hole.p2a:hole.team2};
+  }
+  return{t1:hole.team1,t2:hole.team2};
+}
 function detectPointChange(oldDays,newDays,t1Name,t2Name){
   if(!oldDays)return null;
   for(let di=0;di<newDays.length;di++){
@@ -106,7 +118,7 @@ function detectPointChange(oldDays,newDays,t1Name,t2Name){
     for(let mi=0;mi<nd.matches.length;mi++){
       const om=od.matches[mi],nm=nd.matches[mi];if(!om)continue;
       for(let r=0;r<2;r++){
-        const ors=calcRoundStatus(om.scores,c.par,r*9,r*9+9),nrs=calcRoundStatus(nm.scores,c.par,r*9,r*9+9);
+        const ors=calcRoundStatus(om.scores,c.par,r*9,r*9+9,nm.mode),nrs=calcRoundStatus(nm.scores,c.par,r*9,r*9+9,nm.mode);
         const op=getPoints(ors),np=getPoints(nrs);
         if(!op&&np){
           const runde=r===0?"Runde 1":"Runde 2";
@@ -154,9 +166,12 @@ function calcStats(days,t1Name,t2Name){
       if(!pairStats[key1])pairStats[key1]={name:key1,team:"t1",pts:0,holesWon:0};
       if(!pairStats[key2])pairStats[key2]={name:key2,team:"t2",pts:0,holesWon:0};
       [0,1].forEach(r=>{
-        const rs=calcRoundStatus(m.scores,course.par,r*9,r*9+9);const pts=getPoints(rs);
+        const rs=calcRoundStatus(m.scores,course.par,r*9,r*9+9,m.mode||"scramble");const pts=getPoints(rs);
         if(pts){pairStats[key1].pts+=pts.t1;pairStats[key2].pts+=pts.t2;}
-        for(let i=r*9;i<r*9+9;i++){const sc=m.scores[i];if(sc.team1!==null&&sc.team2!==null){if(sc.team1<sc.team2){pairStats[key1].holesWon++;t1TotalHoles++;holeWins.t1[i]++;}else if(sc.team2<sc.team1){pairStats[key2].holesWon++;t2TotalHoles++;holeWins.t2[i]++;}else holeWins.tie[i]++;}}
+        for(let i=r*9;i<r*9+9;i++){
+          const sc=m.scores[i];const {t1,t2}=effectiveScores(sc,m.mode||"scramble");
+          if(t1!==null&&t2!==null){if(t1<t2){pairStats[key1].holesWon++;t1TotalHoles++;holeWins.t1[i]++;}else if(t2<t1){pairStats[key2].holesWon++;t2TotalHoles++;holeWins.t2[i]++;}else holeWins.tie[i]++;}
+        }
       });
     });
   });
@@ -1395,15 +1410,22 @@ function PairingEditor({config,dayIdx,onSave,onClose,T}){
 // ══════════════════════════════════════════════════════════════════════════════
 function ScoreModal({match,holeIndex,t1Name,t2Name,existing,par,onSave,onClose,T}){
   const hp=par[holeIndex];
-  const mode=GAME_MODES[match.mode||"scramble"];
+  const matchMode=match.mode||"scramble";
+  const mode=GAME_MODES[matchMode];
   const t1Photos=match.t1Photos||{};const t2Photos=match.t2Photos||{};
   const t1PlayerIds=match.t1PlayerIds||[];const t2PlayerIds=match.t2PlayerIds||[];
   const isRound2Start=holeIndex===9;
   const isRound1=holeIndex<9;
+  const isFourball=matchMode==="fourball";
+  const isSingles=matchMode==="singles";
+  const isTeam=!isFourball&&!isSingles;
 
-  // Default to par if no existing score
   const [t1,setT1]=useState(existing?.team1??hp);
   const [t2,setT2]=useState(existing?.team2??hp);
+  const [p1a,setP1a]=useState(existing?.p1a??hp);
+  const [p1b,setP1b]=useState(existing?.p1b??hp);
+  const [p2a,setP2a]=useState(existing?.p2a??hp);
+  const [p2b,setP2b]=useState(existing?.p2b??hp);
 
   const golfLabel=(score,p)=>{
     const diff=score-p;
@@ -1416,6 +1438,26 @@ function ScoreModal({match,holeIndex,t1Name,t2Name,existing,par,onSave,onClose,T
     return{label:`+${diff} ☠️`,color:"#B71C1C"};
   };
 
+  const MiniStepper=({val,setVal,name,photo,color})=>{
+    const {label,color:lc}=golfLabel(val,hp);
+    return(
+      <div style={{textAlign:"center",flex:1}}>
+        <div style={{display:"flex",justifyContent:"center",marginBottom:"4px"}}>
+          <PlayerAvatar name={name} size={26} color={color} photo={photo}/>
+        </div>
+        <div style={{fontSize:"9px",color,fontWeight:"700",marginBottom:"4px",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"70px",margin:"0 auto 4px"}}>{name.split(" ")[0]}</div>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <button onClick={()=>setVal(v=>Math.max(1,v-1))} style={{width:"30px",height:"44px",fontSize:"18px",fontWeight:"900",background:T.isDark?"#0A1F10":T.elevated,border:`1.5px solid ${T.border}`,borderRadius:"6px 0 0 6px",color:T.blue,cursor:"pointer",userSelect:"none"}}>−</button>
+          <div style={{width:"40px",height:"44px",background:T.isDark?"#060E1A":T.elevated,border:`1.5px solid ${color}`,display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <div style={{fontSize:"22px",fontWeight:"900",color:T.cream,fontFamily:"'Arial Black',sans-serif"}}>{val}</div>
+          </div>
+          <button onClick={()=>setVal(v=>Math.min(12,v+1))} style={{width:"30px",height:"44px",fontSize:"18px",fontWeight:"900",background:T.isDark?"#0A1F10":T.elevated,border:`1.5px solid ${T.border}`,borderRadius:"0 6px 6px 0",color:T.red,cursor:"pointer",userSelect:"none"}}>+</button>
+        </div>
+        <div style={{fontSize:"9px",fontWeight:"700",color:lc,marginTop:"4px"}}>{label}</div>
+      </div>
+    );
+  };
+
   const ScoreStepper=({val,setVal,color,pair,playerIds,photos,teamName})=>{
     const {label,color:lcolor}=golfLabel(val,hp);
     return(
@@ -1425,32 +1467,33 @@ function ScoreModal({match,holeIndex,t1Name,t2Name,existing,par,onSave,onClose,T
           {pair.map((name,pi)=>{const pid=playerIds[pi];const photo=pid?photos[pid]:null;return<PlayerAvatar key={pi} name={name} size={28} color={color} photo={photo}/>;} )}
         </div>
         <div style={{fontSize:"10px",color,fontWeight:"600",marginBottom:"10px",lineHeight:1.2}}>{pair.join(" & ")}</div>
-        <div style={{display:"flex",alignItems:"center",justifyContent:"center",gap:"0"}}>
-          <button
-            onClick={()=>setVal(v=>Math.max(1,v-1))}
-            style={{width:"44px",height:"64px",fontSize:"24px",fontWeight:"900",background:T.isDark?"#0A1F10":T.elevated,border:`2px solid ${T.border}`,borderRadius:"8px 0 0 8px",color:T.blue,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",userSelect:"none"}}>
-            −
-          </button>
-          <div style={{width:"60px",height:"64px",background:T.isDark?"#060E1A":T.elevated,border:`2px solid ${color}`,borderTop:`2px solid ${color}`,borderBottom:`2px solid ${color}`,display:"flex",alignItems:"center",justifyContent:"center"}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <button onClick={()=>setVal(v=>Math.max(1,v-1))} style={{width:"44px",height:"64px",fontSize:"24px",fontWeight:"900",background:T.isDark?"#0A1F10":T.elevated,border:`2px solid ${T.border}`,borderRadius:"8px 0 0 8px",color:T.blue,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",userSelect:"none"}}>−</button>
+          <div style={{width:"60px",height:"64px",background:T.isDark?"#060E1A":T.elevated,border:`2px solid ${color}`,display:"flex",alignItems:"center",justifyContent:"center"}}>
             <div style={{fontSize:"36px",fontWeight:"900",color:T.cream,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{val}</div>
           </div>
-          <button
-            onClick={()=>setVal(v=>Math.min(12,v+1))}
-            style={{width:"44px",height:"64px",fontSize:"24px",fontWeight:"900",background:T.isDark?"#0A1F10":T.elevated,border:`2px solid ${T.border}`,borderRadius:"0 8px 8px 0",color:T.red,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",userSelect:"none"}}>
-            +
-          </button>
+          <button onClick={()=>setVal(v=>Math.min(12,v+1))} style={{width:"44px",height:"64px",fontSize:"24px",fontWeight:"900",background:T.isDark?"#0A1F10":T.elevated,border:`2px solid ${T.border}`,borderRadius:"0 8px 8px 0",color:T.red,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",userSelect:"none"}}>+</button>
         </div>
         <div style={{fontSize:"11px",fontWeight:"700",color:lcolor,marginTop:"6px",height:"18px"}}>{label}</div>
       </div>
     );
   };
 
+  const handleSave=()=>{
+    if(isTeam){onSave(t1,t2);}
+    else if(isFourball){const eff1=Math.min(p1a,p1b);const eff2=Math.min(p2a,p2b);onSave(eff1,eff2,{p1a,p1b,p2a,p2b});}
+    else if(isSingles){onSave(p1a,p2a,{p1a,p1b:null,p2a,p2b:null});}
+  };
+
+  const fb1=isFourball?Math.min(p1a,p1b):null;
+  const fb2=isFourball?Math.min(p2a,p2b):null;
+  const fbWinner=fb1!==null&&fb2!==null?fb1<fb2?"t1":fb2<fb1?"t2":"tie":null;
+
   return(
     <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",display:"flex",alignItems:"flex-end",justifyContent:"center",zIndex:100}} onClick={onClose}>
-      <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"16px 16px 0 0",padding:"16px 18px 30px",width:"100%",maxWidth:"480px"}} onClick={e=>e.stopPropagation()}>
+      <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"16px 16px 0 0",padding:"16px 18px 30px",width:"100%",maxWidth:"480px",maxHeight:"92vh",overflowY:"auto",WebkitOverflowScrolling:"touch"}} onClick={e=>e.stopPropagation()}>
         <div style={{width:"36px",height:"4px",background:T.border,borderRadius:"2px",margin:"0 auto 14px"}}/>
 
-        {/* Round 2 banner */}
         {isRound2Start&&(
           <div style={{background:`linear-gradient(135deg,${T.gold}33,${T.gold}11)`,border:`2px solid ${T.gold}`,borderRadius:"10px",padding:"8px 14px",marginBottom:"12px",textAlign:"center"}}>
             <div style={{fontSize:"13px",fontWeight:"900",color:T.gold,letterSpacing:"1px"}}>🏁➡️🏌️ RUNDE 2 BEGINNT!</div>
@@ -1458,15 +1501,10 @@ function ScoreModal({match,holeIndex,t1Name,t2Name,existing,par,onSave,onClose,T
           </div>
         )}
 
-        {/* Header: LOCH big, match small */}
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"14px"}}>
           <div>
-            <div style={{fontSize:"28px",fontWeight:"900",color:T.gold,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>
-              LOCH {holeIndex+1}
-            </div>
-            <div style={{fontSize:"11px",color:T.faint,marginTop:"2px"}}>
-              {match.name} · {isRound1?"Runde 1":"Runde 2"} · {mode?.icon} {mode?.label}
-            </div>
+            <div style={{fontSize:"28px",fontWeight:"900",color:T.gold,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>LOCH {holeIndex+1}</div>
+            <div style={{fontSize:"11px",color:T.faint,marginTop:"2px"}}>{match.name} · {isRound1?"Runde 1":"Runde 2"} · {mode?.icon} {mode?.label}</div>
           </div>
           <div style={{textAlign:"center",background:isRound2Start?T.gold+"22":T.elevated,border:`1.5px solid ${isRound2Start?T.gold:T.border}`,borderRadius:"8px",padding:"6px 14px"}}>
             <div style={{fontSize:"9px",color:T.muted,letterSpacing:"1px"}}>PAR</div>
@@ -1474,15 +1512,76 @@ function ScoreModal({match,holeIndex,t1Name,t2Name,existing,par,onSave,onClose,T
           </div>
         </div>
 
-        {/* Steppers */}
-        <div style={{display:"flex",gap:"16px",marginBottom:"18px"}}>
-          <ScoreStepper val={t1} setVal={setT1} color={T.blue} pair={match.t1Pair||[]} playerIds={t1PlayerIds} photos={t1Photos} teamName={t1Name}/>
-          <div style={{width:"1px",background:T.border,margin:"0 4px"}}/>
-          <ScoreStepper val={t2} setVal={setT2} color={T.red} pair={match.t2Pair||[]} playerIds={t2PlayerIds} photos={t2Photos} teamName={t2Name}/>
-        </div>
+        {isTeam&&(
+          <div style={{display:"flex",gap:"16px",marginBottom:"18px"}}>
+            <ScoreStepper val={t1} setVal={setT1} color={T.blue} pair={match.t1Pair||[]} playerIds={t1PlayerIds} photos={t1Photos} teamName={t1Name}/>
+            <div style={{width:"1px",background:T.border}}/>
+            <ScoreStepper val={t2} setVal={setT2} color={T.red} pair={match.t2Pair||[]} playerIds={t2PlayerIds} photos={t2Photos} teamName={t2Name}/>
+          </div>
+        )}
 
-        <button style={{width:"100%",padding:"14px",background:`linear-gradient(135deg,${T.gold},#A07830)`,border:"none",borderRadius:"8px",color:T.isDark?"#0D2B1A":"white",fontSize:"15px",fontWeight:"900",letterSpacing:"2px",cursor:"pointer"}}
-          onClick={()=>onSave(t1,t2)}>
+        {isFourball&&(
+          <>
+            <div style={{display:"flex",gap:"8px",marginBottom:"10px"}}>
+              <div style={{flex:1,background:T.blue+"11",borderRadius:"10px",padding:"10px 8px"}}>
+                <div style={{fontSize:"9px",color:T.blue,fontWeight:"700",letterSpacing:"1px",textAlign:"center",marginBottom:"8px"}}>{t1Name}</div>
+                <div style={{display:"flex",gap:"6px"}}>
+                  {[{nm:(match.t1Pair||[])[0]||"Sp. 1",pid:t1PlayerIds[0],val:p1a,set:setP1a},
+                    {nm:(match.t1Pair||[])[1]||"Sp. 2",pid:t1PlayerIds[1],val:p1b,set:setP1b}
+                  ].map((pl,i)=>(
+                    <MiniStepper key={i} val={pl.val} setVal={pl.set} name={pl.nm} photo={pl.pid?t1Photos[pl.pid]:null} color={T.blue}/>
+                  ))}
+                </div>
+                <div style={{marginTop:"8px",textAlign:"center",fontSize:"11px",color:T.blue,fontWeight:"700"}}>
+                  Best Ball: <span style={{fontSize:"16px",fontWeight:"900"}}>{fb1}</span>
+                  <div style={{fontSize:"9px",color:T.faint}}>{golfLabel(fb1,hp).label}</div>
+                </div>
+              </div>
+              <div style={{flex:1,background:T.red+"11",borderRadius:"10px",padding:"10px 8px"}}>
+                <div style={{fontSize:"9px",color:T.red,fontWeight:"700",letterSpacing:"1px",textAlign:"center",marginBottom:"8px"}}>{t2Name}</div>
+                <div style={{display:"flex",gap:"6px"}}>
+                  {[{nm:(match.t2Pair||[])[0]||"Sp. 1",pid:t2PlayerIds[0],val:p2a,set:setP2a},
+                    {nm:(match.t2Pair||[])[1]||"Sp. 2",pid:t2PlayerIds[1],val:p2b,set:setP2b}
+                  ].map((pl,i)=>(
+                    <MiniStepper key={i} val={pl.val} setVal={pl.set} name={pl.nm} photo={pl.pid?t2Photos[pl.pid]:null} color={T.red}/>
+                  ))}
+                </div>
+                <div style={{marginTop:"8px",textAlign:"center",fontSize:"11px",color:T.red,fontWeight:"700"}}>
+                  Best Ball: <span style={{fontSize:"16px",fontWeight:"900"}}>{fb2}</span>
+                  <div style={{fontSize:"9px",color:T.faint}}>{golfLabel(fb2,hp).label}</div>
+                </div>
+              </div>
+            </div>
+            <div style={{textAlign:"center",background:fbWinner==="t1"?T.blue+"22":fbWinner==="t2"?T.red+"22":T.elevated,borderRadius:"8px",padding:"8px",marginBottom:"14px",border:`1px solid ${fbWinner==="t1"?T.blue:fbWinner==="t2"?T.red:T.border}`}}>
+              <div style={{fontSize:"11px",fontWeight:"700",color:fbWinner==="t1"?T.blue:fbWinner==="t2"?T.red:T.muted}}>
+                {fbWinner==="t1"?`🔵 ${t1Name} gewinnt Loch`:fbWinner==="t2"?`🔴 ${t2Name} gewinnt Loch`:"🤝 Loch geteilt"}
+              </div>
+            </div>
+          </>
+        )}
+
+        {isSingles&&(
+          <>
+            <div style={{display:"flex",gap:"16px",alignItems:"flex-start",marginBottom:"14px"}}>
+              <div style={{flex:1,textAlign:"center"}}>
+                <div style={{fontSize:"10px",color:T.blue,fontWeight:"700",letterSpacing:"1px",marginBottom:"8px"}}>{t1Name}</div>
+                <MiniStepper val={p1a} setVal={setP1a} name={(match.t1Pair||[])[0]||t1Name} photo={t1PlayerIds[0]?t1Photos[t1PlayerIds[0]]:null} color={T.blue}/>
+              </div>
+              <div style={{paddingTop:"40px",fontSize:"14px",color:T.muted,fontWeight:"700"}}>vs</div>
+              <div style={{flex:1,textAlign:"center"}}>
+                <div style={{fontSize:"10px",color:T.red,fontWeight:"700",letterSpacing:"1px",marginBottom:"8px"}}>{t2Name}</div>
+                <MiniStepper val={p2a} setVal={setP2a} name={(match.t2Pair||[])[0]||t2Name} photo={t2PlayerIds[0]?t2Photos[t2PlayerIds[0]]:null} color={T.red}/>
+              </div>
+            </div>
+            <div style={{textAlign:"center",background:p1a<p2a?T.blue+"22":p2a<p1a?T.red+"22":T.elevated,borderRadius:"8px",padding:"8px",marginBottom:"14px",border:`1px solid ${p1a<p2a?T.blue:p2a<p1a?T.red:T.border}`}}>
+              <div style={{fontSize:"11px",fontWeight:"700",color:p1a<p2a?T.blue:p2a<p1a?T.red:T.muted}}>
+                {p1a<p2a?`🔵 ${(match.t1Pair||[])[0]||t1Name} gewinnt Loch`:p2a<p1a?`🔴 ${(match.t2Pair||[])[0]||t2Name} gewinnt Loch`:"🤝 Loch geteilt"}
+              </div>
+            </div>
+          </>
+        )}
+
+        <button style={{width:"100%",padding:"14px",background:`linear-gradient(135deg,${T.gold},#A07830)`,border:"none",borderRadius:"8px",color:T.isDark?"#0D2B1A":"white",fontSize:"15px",fontWeight:"900",letterSpacing:"2px",cursor:"pointer"}} onClick={handleSave}>
           Speichern
         </button>
         <button style={{width:"100%",padding:"10px",background:"transparent",border:`1px solid ${T.border}`,borderRadius:"8px",color:T.muted,fontSize:"13px",cursor:"pointer",marginTop:"8px"}} onClick={onClose}>
@@ -1492,33 +1591,42 @@ function ScoreModal({match,holeIndex,t1Name,t2Name,existing,par,onSave,onClose,T
     </div>
   );
 }
-
-function NineHoleGrid({scores,pars,startHole,matchId,onHoleClick,canEdit,T,roundStatus}){
-  // decisionAt is the absolute hole index where the round was decided
-  // holes after that index are "dead" – shown dimmed
+function NineHoleGrid({scores,pars,startHole,matchId,onHoleClick,canEdit,T,roundStatus,mode}){
   const decisionAt = roundStatus?.won && roundStatus.decisionAt != null
-    ? roundStatus.decisionAt
-    : null;
+    ? roundStatus.decisionAt : null;
+  const isFourball=mode==="fourball";
+  const isSingles=mode==="singles";
+  const showPerPlayer=isFourball||isSingles;
   return(
     <div style={{display:"grid",gridTemplateColumns:"repeat(9,1fr)",gap:"3px"}}>
       {scores.slice(startHole,startHole+9).map((s,i)=>{
-        const hn=startHole+i,p=pars[hn],played=s.team1!==null&&s.team2!==null;
+        const hn=startHole+i,p=pars[hn];
+        const {t1,t2}=effectiveScores(s,mode);
+        const played=t1!==null&&t2!==null;
         const isDead=decisionAt!==null&&hn>decisionAt;
         let bg=T.holeBg,color=T.holeText,border=`1px solid ${T.border}`;
         if(played){
           border="none";
-          if(s.team1<s.team2){bg=T.blue+"25";color=T.blue;}
-          else if(s.team2<s.team1){bg=T.red+"25";color=T.red;}
+          if(t1<t2){bg=T.blue+"25";color=T.blue;}
+          else if(t2<t1){bg=T.red+"25";color=T.red;}
           else{bg=T.border;color=T.muted;}
         }
         const finalOpacity=isDead?0.32:(canEdit?1:played?0.9:0.6);
         const finalBorder=isDead?`1px dashed ${T.border}`:border;
         const finalFilter=isDead?"saturate(0.25)":"none";
         return(
-          <div key={i} style={{borderRadius:"4px",cursor:canEdit?"pointer":"default",background:bg,color,border:finalBorder,userSelect:"none",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"2px 0",minHeight:"32px",opacity:finalOpacity,filter:finalFilter}} onClick={()=>canEdit&&onHoleClick(matchId,hn)}>
+          <div key={i} style={{borderRadius:"4px",cursor:canEdit?"pointer":"default",background:bg,color,border:finalBorder,userSelect:"none",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"2px 0",minHeight:showPerPlayer?"38px":"32px",opacity:finalOpacity,filter:finalFilter}} onClick={()=>canEdit&&onHoleClick(matchId,hn)}>
             <div style={{fontSize:"9px",fontWeight:"700",lineHeight:1}}>{hn+1}</div>
             <div style={{fontSize:"7px",opacity:0.6,lineHeight:1}}>P{p}</div>
-            {played&&<div style={{fontSize:"8px",fontWeight:"900",lineHeight:1}}>{s.team1}:{s.team2}</div>}
+            {played&&!showPerPlayer&&<div style={{fontSize:"8px",fontWeight:"900",lineHeight:1}}>{t1}:{t2}</div>}
+            {played&&showPerPlayer&&(
+              <div style={{fontSize:"7px",lineHeight:1.1,textAlign:"center"}}>
+                {isFourball&&s.p1a!==null&&<span style={{color:T.blue,fontWeight:"700"}}>{s.p1a}{s.p1b!==null?`·${s.p1b}`:""}</span>}
+                {isFourball&&<span style={{color:T.muted}}>/</span>}
+                {isFourball&&s.p2a!==null&&<span style={{color:T.red,fontWeight:"700"}}>{s.p2a}{s.p2b!==null?`·${s.p2b}`:""}</span>}
+                {isSingles&&<span style={{fontWeight:"900"}}>{t1}:{t2}</span>}
+              </div>
+            )}
           </div>
         );
       })}
@@ -1528,7 +1636,7 @@ function NineHoleGrid({scores,pars,startHole,matchId,onHoleClick,canEdit,T,round
 
 function MatchCard({match,pars,t1Name,t2Name,canEdit,isAdmin,onHoleClick,onReset,T,captainT1,captainT2}){
   const [showReset,setShowReset]=useState(false);
-  const r1=calcRoundStatus(match.scores,pars,0,9);const r2=calcRoundStatus(match.scores,pars,9,18);
+  const r1=calcRoundStatus(match.scores,pars,0,9,match.mode);const r2=calcRoundStatus(match.scores,pars,9,18,match.mode);
   const mode=GAME_MODES[match.mode||"scramble"];
   const t1Photos=match.t1Photos||{};const t2Photos=match.t2Photos||{};
   const t1PlayerIds=match.t1PlayerIds||[];const t2PlayerIds=match.t2PlayerIds||[];
@@ -1596,13 +1704,13 @@ function MatchCard({match,pars,t1Name,t2Name,canEdit,isAdmin,onHoleClick,onReset
             <div style={{fontSize:"9px",color:T.blue,fontWeight:"700",letterSpacing:"1px",background:T.blue+"18",border:`1px solid ${T.blue}44`,borderRadius:"4px",padding:"2px 8px"}}>🏌️ RUNDE 1</div>
             <div style={{flex:1,height:"1px",background:`linear-gradient(90deg,${T.blue}44,transparent)`}}/>
           </div>
-          <NineHoleGrid scores={match.scores} pars={pars} startHole={0} matchId={match.id} onHoleClick={onHoleClick} canEdit={canEdit} T={T} roundStatus={r1}/>
+          <NineHoleGrid scores={match.scores} pars={pars} startHole={0} matchId={match.id} onHoleClick={onHoleClick} canEdit={canEdit} T={T} roundStatus={r1} mode={match.mode}/>
           <div style={{margin:"8px 0 6px",display:"flex",alignItems:"center",gap:"6px"}}>
             <div style={{flex:1,height:"1px",background:`linear-gradient(90deg,transparent,${T.gold}44)`}}/>
             <div style={{fontSize:"9px",color:T.gold,fontWeight:"700",letterSpacing:"1px",background:T.gold+"18",border:`1px solid ${T.gold}44`,borderRadius:"4px",padding:"2px 8px"}}>⛳ RUNDE 2</div>
             <div style={{flex:1,height:"1px",background:`linear-gradient(90deg,${T.gold}44,transparent)`}}/>
           </div>
-          <NineHoleGrid scores={match.scores} pars={pars} startHole={9} matchId={match.id} onHoleClick={onHoleClick} canEdit={canEdit} T={T} roundStatus={r2}/>
+          <NineHoleGrid scores={match.scores} pars={pars} startHole={9} matchId={match.id} onHoleClick={onHoleClick} canEdit={canEdit} T={T} roundStatus={r2} mode={match.mode}/>
           {!canEdit&&!isAdmin&&<div style={{marginTop:"8px",fontSize:"10px",color:T.faint,textAlign:"center"}}>🔒 Nur lesbar</div>}
         </div>
       </div>
@@ -1850,8 +1958,8 @@ function StatsTab({days,t1Name,t2Name,T,captainT1,captainT2,allPlayers}){
         {days.map(day=>{
           const course=COURSES[day.courseKey]||Object.values(COURSES)[0];
           return day.matches.map((m,mi)=>{
-            const r1=calcRoundStatus(m.scores,course.par,0,9);
-            const r2=calcRoundStatus(m.scores,course.par,9,18);
+            const r1=calcRoundStatus(m.scores,course.par,0,9,m.mode);
+            const r2=calcRoundStatus(m.scores,course.par,9,18,m.mode);
             return(
               <Card key={m.id} style={{padding:"8px 12px"}}>
                 <div style={{fontSize:10,color:T.gold,fontWeight:700,marginBottom:6}}>{m.name}</div>
@@ -2044,11 +2152,11 @@ function CourseTracker({day, matches, matchRefs, T}){
     if(!c) return {label:"—",diff:0};
     const inR2 = c > 9;
     if(inR2){
-      const r2 = calcRoundStatus(m.scores, course.par, 9, 18);
+      const r2 = calcRoundStatus(m.scores,course.par,9,18,m.mode);
       if(!r2.holesPlayed) return {label:"AS",diff:0};
       return {label:r2.label, diff:r2.diff};
     } else {
-      const r1 = calcRoundStatus(m.scores, course.par, 0, 9);
+      const r1 = calcRoundStatus(m.scores,course.par,0,9,m.mode);
       if(!r1.holesPlayed) return {label:"—",diff:0};
       return {label:r1.label, diff:r1.diff};
     }
@@ -2204,7 +2312,7 @@ function CourseTracker({day, matches, matchRefs, T}){
 
 function DaySummary({day,t1Name,t2Name,T}){
   const course=COURSES[day.courseKey]||Object.values(COURSES)[0];let t1=0,t2=0;
-  day.matches.forEach(m=>{[0,1].forEach(r=>{const rs=calcRoundStatus(m.scores,course.par,r*9,r*9+9);const p=getPoints(rs);if(p){t1+=p.t1;t2+=p.t2;}});});
+  day.matches.forEach(m=>{[0,1].forEach(r=>{const rs=calcRoundStatus(m.scores,course.par,r*9,r*9+9,m.mode);const p=getPoints(rs);if(p){t1+=p.t1;t2+=p.t2;}});});
   return(<div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}><div><div style={{fontSize:"11px",color:T.gold,fontWeight:"700"}}>{day.label}</div><div style={{fontSize:"10px",color:T.faint}}>{course.shortName} · {day.matches.length} Matches</div></div><div style={{display:"flex",gap:"8px",alignItems:"center"}}><span style={{color:T.blue,fontWeight:"700",fontSize:"16px"}}>{fmt(t1)}</span><span style={{color:T.muted,fontSize:"11px"}}>:</span><span style={{color:T.red,fontWeight:"700",fontSize:"16px"}}>{fmt(t2)}</span></div></div>);
 }
 
@@ -2272,9 +2380,9 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
     }catch(e){}
   };
 
-  const saveScore=async(dayId,matchId,hi,t1s,t2s)=>{
+  const saveScore=async(dayId,matchId,hi,t1s,t2s,extraScores)=>{
     setSaving(true);
-    const nd=days.map(day=>{if(day.id!==dayId)return day;return{...day,matches:day.matches.map(m=>{if(m.id!==matchId)return m;const ns=[...m.scores];ns[hi]={team1:t1s,team2:t2s};return{...m,scores:ns};})};});
+    const nd=days.map(day=>{if(day.id!==dayId)return day;return{...day,matches:day.matches.map(m=>{if(m.id!==matchId)return m;const ns=[...m.scores];ns[hi]={team1:t1s,team2:t2s,...(extraScores||{})};return{...m,scores:ns};})};});
     const change=detectPointChange(days,nd,t1Name,t2Name);if(change)await sendPushToAll(change.title,change.body,change.key);
 
     // ── System Chat Events ──────────────────────────────────────────────────
@@ -2293,7 +2401,7 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
       }
       // Round decision — use per-round diff for color (Fix 4)
       const roundIdx=hi<9?0:1;
-      const rs=calcRoundStatus(match.scores,course.par,roundIdx*9,roundIdx*9+9);
+      const rs=calcRoundStatus(match.scores,course.par,roundIdx*9,roundIdx*9+9,match.mode);
       const prevMatch=days.find(d=>d.id===dayId)?.matches.find(m=>m.id===matchId);
       const prevRs=prevMatch?calcRoundStatus(prevMatch.scores,course.par,roundIdx*9,roundIdx*9+9):null;
       if(rs.won&&!prevRs?.won){
@@ -2314,7 +2422,7 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
       }
       // Halftime: when hole 9 just completed → show popup instead of direct jump
       if(hi===8){
-        const r1=calcRoundStatus(match.scores,course.par,0,9);
+        const r1=calcRoundStatus(match.scores,course.par,0,9,match.mode);
         const pts=getPoints(r1);
         if(pts){await postChatMessage({type:"system",subtype:"halftime",text:`📊 Halbzeit ${matchName}: ${r1.label} — ${pts.t1>pts.t2?t1Name:pts.t2>pts.t1?t2Name:"Unentschieden"} gewinnt Runde 1`,ts:Date.now()},`halftime-${matchId}`);}
         await saveTournament({...config,days:nd});setSaving(false);
@@ -2497,9 +2605,9 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
         )}
       </div>
       {modal&&mMatch&&mDay&&(
-        <ScoreModal match={mMatch} holeIndex={modal.holeIndex} t1Name={t1Name} t2Name={t2Name} par={(COURSES[mDay.courseKey]||Object.values(COURSES)[0]).par} existing={mMatch.scores[modal.holeIndex]} onSave={(t1s,t2s)=>saveScore(modal.dayId,modal.matchId,modal.holeIndex,t1s,t2s)} onClose={()=>setModal(null)} T={T}/>
+        <ScoreModal match={mMatch} holeIndex={modal.holeIndex} t1Name={t1Name} t2Name={t2Name} par={(COURSES[mDay.courseKey]||Object.values(COURSES)[0]).par} existing={mMatch.scores[modal.holeIndex]} onSave={(t1s,t2s,extra)=>saveScore(modal.dayId,modal.matchId,modal.holeIndex,t1s,t2s,extra)} onClose={()=>setModal(null)} T={T}/>
       )}
-      {pairingDay!==null&&<PairingEditor config={config} dayIdx={pairingDay} T={T} onClose={()=>setPairingDay(null)} onSave={newConfig=>{setPairingDay(null);window.location.reload();}}/>}
+      {pairingDay!==null&&<PairingEditor config={config} dayIdx={pairingDay} T={T} onClose={()=>setPairingDay(null)} onSave={()=>setPairingDay(null)}/>}
     </div>
   );
 }
@@ -2559,12 +2667,12 @@ function MatchArchive({onBack,T,theme,onThemeToggle}){
                 <div style={{borderTop:`1px solid ${T.border}`,padding:"12px 14px"}}>
                   {entry.days.map((day,di)=>{
                     const course=COURSES[day.courseKey]||Object.values(COURSES)[0];
-                    let dayT1=0,dayT2=0;day.matches.forEach(m=>{[0,1].forEach(r=>{const rs=calcRoundStatus(m.scores,course.par,r*9,r*9+9);const p=getPoints(rs);if(p){dayT1+=p.t1;dayT2+=p.t2;}});});
+                    let dayT1=0,dayT2=0;day.matches.forEach(m=>{[0,1].forEach(r=>{const rs=calcRoundStatus(m.scores,course.par,r*9,r*9+9,m.mode);const p=getPoints(rs);if(p){dayT1+=p.t1;dayT2+=p.t2;}});});
                     return(
                       <div key={di} style={{marginBottom:"12px"}}>
                         <div style={{fontSize:"11px",color:T.gold,fontWeight:"700",marginBottom:"8px"}}>{day.label} – <span style={{color:T.blue}}>{fmt(dayT1)}</span> : <span style={{color:T.red}}>{fmt(dayT2)}</span></div>
                         {day.matches.map(m=>{
-                          const r1=calcRoundStatus(m.scores,course.par,0,9);const r2=calcRoundStatus(m.scores,course.par,9,18);
+                          const r1=calcRoundStatus(m.scores,course.par,0,9);const r2=calcRoundStatus(m.scores,course.par,9,18,m.mode);
                           const p1=getPoints(r1);const p2=getPoints(r2);
                           return(
                             <div key={m.id} style={{background:T.isDark?"#0A2014":T.elevated,borderRadius:"8px",padding:"8px 10px",marginBottom:"6px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
