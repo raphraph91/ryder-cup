@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
-const VERSION = "2.06";
+const VERSION = "2.07";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLlzavBNImCRG0JacPZWdVIxezxKiqHcc",
@@ -281,8 +281,8 @@ function ChatBubble({msg,myUid,isAdmin,T,onReact,onDelete}){
   const [showPicker,setShowPicker]=useState(false);
   const reactions=msg.reactions||{};
 
-  const typeColor={matchDecision:T.red,birdie:T.blue,leadChange:T.gold,halftime:T.muted,equalize:T.muted,everyHole:T.faint};
-  const typeBg={matchDecision:T.red+"18",birdie:T.blue+"18",leadChange:T.gold+"18",halftime:T.elevated,equalize:T.elevated,everyHole:T.elevated};
+  const typeColor={matchDecision:T.gold,matchDecisionT1:T.blue,matchDecisionT2:T.red,birdie:T.blue,leadChange:T.gold,halftime:T.muted,equalize:T.muted,everyHole:T.faint};
+  const typeBg={matchDecision:T.gold+"18",matchDecisionT1:T.blue+"18",matchDecisionT2:T.red+"18",birdie:T.blue+"18",leadChange:T.gold+"18",halftime:T.elevated,equalize:T.elevated,everyHole:T.elevated};
 
   const ReactionBar=()=>(
     <div style={{display:"flex",gap:"4px",marginTop:"4px",flexWrap:"wrap",paddingLeft:"4px"}}>
@@ -362,7 +362,7 @@ function NotifSettings({prefs,onUpdate,T}){
 }
 
 // ── LiveChat main component ───────────────────────────────────────────────────
-function LiveChat({role,T,mini=true,onExpand}){
+function LiveChat({role,T,mini=true,onExpand,onClearChat}){
   const msgs=useChatMessages();
   const [prefs,updatePrefs]=useChatPrefs();
   const [profile,saveProfile]=useChatProfile();
@@ -377,7 +377,8 @@ function LiveChat({role,T,mini=true,onExpand}){
   // Filter by prefs
   const visible=msgs.filter(m=>{
     if(m.type!=="system")return true;
-    return prefs[m.subtype]!==false;
+    const sub=m.subtype==="matchDecisionT1"||m.subtype==="matchDecisionT2"?"matchDecision":m.subtype;
+    return prefs[sub]!==false;
   });
 
   useEffect(()=>{
@@ -462,6 +463,7 @@ function LiveChat({role,T,mini=true,onExpand}){
           <button onClick={()=>setShowSettings(s=>!s)} style={{background:"transparent",border:`1px solid ${showSettings?T.gold:T.border}`,borderRadius:"6px",padding:"5px 8px",color:showSettings?T.gold:T.muted,cursor:"pointer",display:"flex",alignItems:"center",gap:"4px",fontSize:"10px"}}>
             <IconGear size={13} color={showSettings?T.gold:T.muted}/>
           </button>
+          {onClearChat&&<button onClick={async()=>{if(window.confirm("Chat wirklich leeren?"))await onClearChat();}} style={{background:"transparent",border:"1px solid #E0525244",borderRadius:"6px",padding:"5px 8px",color:"#E05252",cursor:"pointer",fontSize:"10px"}}>🗑 Leeren</button>}
         </div>
       </div>
 
@@ -885,7 +887,10 @@ function TournamentPlanning({onStart,onBack,T,theme,onThemeToggle}){
       t1Players:t1Players.map(p=>({id:p.id,fn:p.fn,ln:p.ln,hcp:p.hcp,photo:p.photo||null,isCapt:p.id===captainT1})),
       t2Players:t2Players.map(p=>({id:p.id,fn:p.fn,ln:p.ln,hcp:p.hcp,photo:p.photo||null,isCapt:p.id===captainT2})),
       days,phase:"game",startedAt:Date.now()};
-    await saveTournament(config);setSaving(false);onStart(config);
+    await saveTournament(config);
+    // Clear chat for fresh tournament
+    try{const snap=await getDocs(collection(db,"liveChat"));await Promise.all(snap.docs.map(d=>deleteDoc(doc(db,"liveChat",d.id))));}catch(e){}
+    setSaving(false);onStart(config);
   };
 
   const tabLabels=["⚙️ Setup","👥 Spieler","🏌️ Matches"];
@@ -1381,12 +1386,16 @@ function NineHoleGrid({scores,pars,startHole,matchId,onHoleClick,canEdit,T,round
   );
 }
 
-function MatchCard({match,pars,t1Name,t2Name,canEdit,isAdmin,onHoleClick,onReset,T}){
+function MatchCard({match,pars,t1Name,t2Name,canEdit,isAdmin,onHoleClick,onReset,T,captainT1,captainT2}){
   const [showReset,setShowReset]=useState(false);
   const r1=calcRoundStatus(match.scores,pars,0,9);const r2=calcRoundStatus(match.scores,pars,9,18);
   const mode=GAME_MODES[match.mode||"scramble"];
   const t1Photos=match.t1Photos||{};const t2Photos=match.t2Photos||{};
   const t1PlayerIds=match.t1PlayerIds||[];const t2PlayerIds=match.t2PlayerIds||[];
+
+  // Captain detection: check if playerIds contain captain
+  const t1HasCapt=captainT1&&t1PlayerIds.includes(captainT1);
+  const t2HasCapt=captainT2&&t2PlayerIds.includes(captainT2);
   const RoundBadge=({rs,pts,label})=>{
     const color=rs.diff>0?T.blue:rs.diff<0?T.red:T.muted;
     return(
@@ -1416,12 +1425,24 @@ function MatchCard({match,pars,t1Name,t2Name,canEdit,isAdmin,onHoleClick,onReset
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
             <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
               {t1PlayerIds.map((pid,i)=><PlayerAvatar key={i} name={(match.t1Pair||[])[i]||""} size={28} color={T.blue} photo={t1Photos[pid]||null}/>)}
-              <div><div style={{fontSize:"11px",color:T.blue,fontWeight:"700"}}>{(match.t1Pair||[]).join(" & ")}</div>{match.teamHcp1!=null&&<div style={{fontSize:"9px",color:T.blue+"88"}}>HCP {match.teamHcp1}</div>}</div>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:"4px",flexWrap:"wrap"}}>
+                  <div style={{fontSize:"11px",color:T.blue,fontWeight:"700"}}>{(match.t1Pair||[]).join(" & ")}</div>
+                  {t1HasCapt&&<span style={{fontSize:"9px",background:T.gold+"33",color:T.gold,borderRadius:"4px",padding:"1px 5px",fontWeight:"700",flexShrink:0}}>🎖️ C</span>}
+                </div>
+                {match.teamHcp1!=null&&<div style={{fontSize:"9px",color:T.blue+"88"}}>HCP {match.teamHcp1}</div>}
+              </div>
             </div>
             <div style={{fontSize:"10px",color:T.muted}}>vs</div>
             <div style={{display:"flex",alignItems:"center",gap:"6px",flexDirection:"row-reverse"}}>
               {t2PlayerIds.map((pid,i)=><PlayerAvatar key={i} name={(match.t2Pair||[])[i]||""} size={28} color={T.red} photo={t2Photos[pid]||null}/>)}
-              <div style={{textAlign:"right"}}><div style={{fontSize:"11px",color:T.red,fontWeight:"700"}}>{(match.t2Pair||[]).join(" & ")}</div>{match.teamHcp2!=null&&<div style={{fontSize:"9px",color:T.red+"88"}}>HCP {match.teamHcp2}</div>}</div>
+              <div style={{textAlign:"right"}}>
+                <div style={{display:"flex",alignItems:"center",gap:"4px",justifyContent:"flex-end",flexWrap:"wrap"}}>
+                  {t2HasCapt&&<span style={{fontSize:"9px",background:T.gold+"33",color:T.gold,borderRadius:"4px",padding:"1px 5px",fontWeight:"700",flexShrink:0}}>🎖️ C</span>}
+                  <div style={{fontSize:"11px",color:T.red,fontWeight:"700"}}>{(match.t2Pair||[]).join(" & ")}</div>
+                </div>
+                {match.teamHcp2!=null&&<div style={{fontSize:"9px",color:T.red+"88"}}>HCP {match.teamHcp2}</div>}
+              </div>
             </div>
           </div>
         </div>
@@ -1430,7 +1451,11 @@ function MatchCard({match,pars,t1Name,t2Name,canEdit,isAdmin,onHoleClick,onReset
             <RoundBadge rs={r1} pts={getPoints(r1)} label="Runde 1 (L. 1–9)"/>
             <RoundBadge rs={r2} pts={getPoints(r2)} label="Runde 2 (L. 10–18)"/>
           </div>
-          <div style={{fontSize:"9px",color:T.faint,letterSpacing:"1px",marginBottom:"3px"}}>RUNDE 1</div>
+          <div style={{margin:"0 0 6px",display:"flex",alignItems:"center",gap:"6px"}}>
+            <div style={{flex:1,height:"1px",background:`linear-gradient(90deg,transparent,${T.blue}44)`}}/>
+            <div style={{fontSize:"9px",color:T.blue,fontWeight:"700",letterSpacing:"1px",background:T.blue+"18",border:`1px solid ${T.blue}44`,borderRadius:"4px",padding:"2px 8px"}}>🏌️ RUNDE 1</div>
+            <div style={{flex:1,height:"1px",background:`linear-gradient(90deg,${T.blue}44,transparent)`}}/>
+          </div>
           <NineHoleGrid scores={match.scores} pars={pars} startHole={0} matchId={match.id} onHoleClick={onHoleClick} canEdit={canEdit} T={T} roundStatus={r1}/>
           <div style={{margin:"8px 0 6px",display:"flex",alignItems:"center",gap:"6px"}}>
             <div style={{flex:1,height:"1px",background:`linear-gradient(90deg,transparent,${T.gold}44)`}}/>
@@ -1513,13 +1538,17 @@ function calcMatchTimeline(match, pars) {
   });
 }
 
-function StatsTab({days,t1Name,t2Name,T}){
+function StatsTab({days,t1Name,t2Name,T,captainT1,captainT2,allPlayers}){
   const [activeSection, setActiveSection] = useState(0);
   const stats = calcStats(days,t1Name,t2Name);
   const scoreDist = calcScoreDistribution(days);
   const heatmap = calcHoleHeatmap(days);
   const totalHoles = stats.t1TotalHoles + stats.t2TotalHoles;
   const t1HolePct = totalHoles > 0 ? Math.round((stats.t1TotalHoles/totalHoles)*100) : 50;
+
+  // Build captain name lookup
+  const captainNames={};
+  if(allPlayers){allPlayers.forEach(p=>{if(p.id===captainT1||p.id===captainT2)captainNames[p.id]=`${p.fn} ${p.ln}`;});}
 
   const SectionTitle = ({children}) => (
     <div style={{fontSize:"10px",color:T.gold,letterSpacing:"2px",textTransform:"uppercase",fontWeight:"700",marginBottom:"10px",marginTop:"16px",display:"flex",alignItems:"center",gap:"6px"}}>
@@ -1530,10 +1559,15 @@ function StatsTab({days,t1Name,t2Name,T}){
   const PairRow = ({pair,maxPts}) => {
     const pct = maxPts>0?(pair.pts/maxPts)*100:0;
     const color = pair.team==="t1"?T.blue:T.red;
+    const captName=captainT1&&captainNames[captainT1];const captName2=captainT2&&captainNames[captainT2];
+    const isCapt=(pair.team==="t1"&&captName&&pair.name.includes(captName.split(" ")[0]))||(pair.team==="t2"&&captName2&&pair.name.includes(captName2.split(" ")[0]));
     return(
       <div style={{marginBottom:"10px"}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"4px"}}>
-          <div style={{fontSize:"12px",color:T.cream,fontWeight:"600"}}>{pair.name}</div>
+          <div style={{display:"flex",alignItems:"center",gap:"5px"}}>
+            <div style={{fontSize:"12px",color:T.cream,fontWeight:"600"}}>{pair.name}</div>
+            {isCapt&&<span style={{fontSize:"9px",background:T.gold+"33",color:T.gold,borderRadius:"4px",padding:"1px 5px",fontWeight:"700"}}>🎖️ C</span>}
+          </div>
           <div style={{display:"flex",gap:"12px",fontSize:"11px"}}><span style={{color:T.muted}}>{pair.holesWon} Löcher</span><span style={{color,fontWeight:"700"}}>{fmt(pair.pts)} Pts</span></div>
         </div>
         <div style={{height:"6px",background:T.elevated,borderRadius:"3px",overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",background:color,borderRadius:"3px",transition:"width 0.6s"}}/></div>
@@ -1885,20 +1919,20 @@ function CourseTracker({day, matches, matchRefs, T}){
   });
 
   // Status per match using proper calcRoundStatus (freezes at decision, ignores dead holes)
+  // Fix 1: show only R2 status when in R2, only R1 when in R1
   const statuses = matches.map((m,i) => {
     const c = completedHoles[i];
-    if(!c)return{label:"—",diff:0};
-    // Combine both rounds for overall diff and label
-    const r1 = calcRoundStatus(m.scores, course.par, 0, 9);
-    const r2 = calcRoundStatus(m.scores, course.par, 9, 18);
-    // Show current round's status if active, or overall
+    if(!c) return {label:"—",diff:0};
     const inR2 = c > 9;
-    const active = inR2 ? r2 : r1;
-    if(!inR2 && !r1.holesPlayed) return {label:"—",diff:0};
-    // Overall diff across both rounds for color
-    const totalDiff = r1.diff + (inR2 ? r2.diff : 0);
-    const label = active.label;
-    return {label, diff: totalDiff};
+    if(inR2){
+      const r2 = calcRoundStatus(m.scores, course.par, 9, 18);
+      if(!r2.holesPlayed) return {label:"AS",diff:0};
+      return {label:r2.label, diff:r2.diff};
+    } else {
+      const r1 = calcRoundStatus(m.scores, course.par, 0, 9);
+      if(!r1.holesPlayed) return {label:"—",diff:0};
+      return {label:r1.label, diff:r1.diff};
+    }
   });
 
   // holeMap: holeIndex → [matchIndex, ...] (multiple matches can share a hole)
@@ -2103,12 +2137,22 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
 
   const myMatchName=!isAdmin&&!isViewer?(()=>{const idx=parseInt(role.split("-")[1]);const all=[];days.forEach(d=>d.matches.forEach(m=>all.push(m.name)));return all[idx]||null;})():null;
 
+  const [halftimePopup,setHalftimePopup]=useState(null); // {matchName, r1Label, pts, dayId, matchId}
+
   useEffect(()=>{if(!messaging)return;const u=onMessage(messaging,p=>{setToast({title:p.notification?.title,body:p.notification?.body});});return()=>u();},[]);
   useEffect(()=>{if(prevRef.current){const change=detectPointChange(prevRef.current,days,t1Name,t2Name);if(change){setToast(change);if(change.winner){setWinEvent(change);setConfetti(true);}}}prevRef.current=days;},[days]);
 
   const stats=calcTournament(days);const t1W=Math.max(5,Math.min(95,stats.t1WinProb));
   const doReset=async matchId=>{setSaving(true);const nd=days.map(day=>({...day,matches:day.matches.map(m=>m.id===matchId?{...m,scores:emptyScores()}:m)}));await saveTournament({...config,days:nd});setSaving(false);};
   const doResetAll=async()=>{setSaving(true);const nd=days.map(day=>({...day,matches:day.matches.map(m=>({...m,scores:emptyScores()}))}));await saveTournament({...config,days:nd});setSaving(false);setResetAll(false);};
+
+  const clearChat=async()=>{
+    try{
+      const snap=await getDocs(collection(db,"liveChat"));
+      await Promise.all(snap.docs.map(d=>deleteDoc(doc(db,"liveChat",d.id))));
+    }catch(e){}
+  };
+
   const saveScore=async(dayId,matchId,hi,t1s,t2s)=>{
     setSaving(true);
     const nd=days.map(day=>{if(day.id!==dayId)return day;return{...day,matches:day.matches.map(m=>{if(m.id!==matchId)return m;const ns=[...m.scores];ns[hi]={team1:t1s,team2:t2s};return{...m,scores:ns};})};});
@@ -2128,35 +2172,41 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
         const label=best<=par-3?"🦅 Eagle":"🐦 Birdie";
         await postChatMessage({type:"system",subtype:"birdie",text:`${label} auf Loch ${holeNum} (${best} vs Par ${par}) — ${matchName}`,ts:Date.now()},`birdie-${matchId}-${hi}`);
       }
-      // Round decision
-      const roundIdx=hi<9?0:1;const rs=calcRoundStatus(match.scores,course.par,roundIdx*9,roundIdx*9+9);
+      // Round decision — use per-round diff for color (Fix 4)
+      const roundIdx=hi<9?0:1;
+      const rs=calcRoundStatus(match.scores,course.par,roundIdx*9,roundIdx*9+9);
       const prevMatch=days.find(d=>d.id===dayId)?.matches.find(m=>m.id===matchId);
       const prevRs=prevMatch?calcRoundStatus(prevMatch.scores,course.par,roundIdx*9,roundIdx*9+9):null;
       if(rs.won&&!prevRs?.won){
+        // Fix 4: winner color — t1=blue subtype, t2=red subtype
         const winner=rs.diff>0?t1Name:rs.diff<0?t2Name:null;
-        await postChatMessage({type:"system",subtype:"matchDecision",text:`🏆 ${matchName} · Runde ${roundIdx+1} entschieden: ${winner?winner+" gewinnt":""} ${rs.label}`,ts:Date.now()},`decision-${matchId}-${roundIdx}`);
+        const subtype=rs.diff>0?"matchDecisionT1":rs.diff<0?"matchDecisionT2":"matchDecision";
+        await postChatMessage({type:"system",subtype,text:`🏆 ${matchName} · Runde ${roundIdx+1} entschieden: ${winner?winner+" gewinnt":""} ${rs.label}`,ts:Date.now()},`decision-${matchId}-${roundIdx}`);
       }
-      // Lead change
-      const prevDiff=prevMatch?prevMatch.scores.slice(0,hi).reduce((acc,s)=>{if(s.team1===null)return acc;return acc+(s.team1<s.team2?1:s.team2<s.team1?-1:0);},0):0;
-      const newDiff=match.scores.slice(0,hi+1).reduce((acc,s)=>{if(s.team1===null)return acc;return acc+(s.team1<s.team2?1:s.team2<s.team1?-1:0);},0);
-      if((prevDiff>0&&newDiff<0)||(prevDiff<0&&newDiff>0)){
-        const leader=newDiff>0?t1Name:t2Name;
+      // Lead change — use round-local diff
+      const rStart=roundIdx*9;
+      const prevRoundDiff=prevMatch?prevMatch.scores.slice(rStart,rStart+hi-rStart+1-1).reduce((acc,s,idx)=>{if(idx+rStart>=hi||s.team1===null)return acc;return acc+(s.team1<s.team2?1:s.team2<s.team1?-1:0);},0):0;
+      const newRoundDiff=match.scores.slice(rStart,hi+1).reduce((acc,s)=>{if(s.team1===null)return acc;return acc+(s.team1<s.team2?1:s.team2<s.team1?-1:0);},0);
+      if((prevRoundDiff>0&&newRoundDiff<0)||(prevRoundDiff<0&&newRoundDiff>0)){
+        const leader=newRoundDiff>0?t1Name:t2Name;
         await postChatMessage({type:"system",subtype:"leadChange",text:`🔄 Führungswechsel in ${matchName} nach Loch ${holeNum} — ${leader} übernimmt die Führung`,ts:Date.now()},`lead-${matchId}-${hi}`);
-      } else if(prevDiff!==0&&newDiff===0&&!rs.won){
+      } else if(prevRoundDiff!==0&&newRoundDiff===0&&!rs.won){
         await postChatMessage({type:"system",subtype:"equalize",text:`🤝 ${matchName} · Ausgleich auf Loch ${holeNum} — jetzt AS`,ts:Date.now()},`eq-${matchId}-${hi}`);
       }
-      // Halftime: when hole 9 just completed
+      // Halftime: when hole 9 just completed → show popup instead of direct jump
       if(hi===8){
         const r1=calcRoundStatus(match.scores,course.par,0,9);
         const pts=getPoints(r1);
         if(pts){await postChatMessage({type:"system",subtype:"halftime",text:`📊 Halbzeit ${matchName}: ${r1.label} — ${pts.t1>pts.t2?t1Name:pts.t2>pts.t1?t2Name:"Unentschieden"} gewinnt Runde 1`,ts:Date.now()},`halftime-${matchId}`);}
+        await saveTournament({...config,days:nd});setSaving(false);
+        setModal(null);
+        setHalftimePopup({matchName,r1Label:r1.label,pts,t1Winner:pts&&pts.t1>pts.t2,t2Winner:pts&&pts.t2>pts.t1,dayId,matchId});
+        return;
       }
     }
     // ────────────────────────────────────────────────────────────────────────
-
     await saveTournament({...config,days:nd});setSaving(false);
-    if(hi===8){setModal({dayId,matchId,holeIndex:9});}
-    else{setModal(null);}
+    setModal(null);
   };
 
   const dayTabs=days.map((d,i)=>({key:`day${i}`,label:`Spieltag ${i+1}`}));
@@ -2210,8 +2260,28 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
           {tabs.map((tab,i)=>(<button key={tab.key} style={{flex:1,padding:"10px 4px",background:activeTab===tab.key?T.elevated:T.isDark?"#0A2014":T.bg,border:"none",borderLeft:i>0?`1px solid ${T.border}`:"none",color:activeTab===tab.key?T.gold:T.muted,cursor:"pointer",fontSize:"10px",letterSpacing:"0.5px",textTransform:"uppercase",fontWeight:activeTab===tab.key?"700":"400",display:"flex",alignItems:"center",justifyContent:"center",gap:"4px"}} onClick={()=>setActiveTab(tab.key)}>{tab.icon}{tab.label}</button>))}
         </div>
 
-        {activeTab==="chat"&&<LiveChat role={role} T={T} mini={false}/>}
-        {activeTab==="stats"&&<StatsTab days={days} t1Name={t1Name} t2Name={t2Name} T={T}/>}
+        {activeTab==="chat"&&<LiveChat role={role} T={T} mini={false} onClearChat={isAdmin?clearChat:null}/>}
+        {halftimePopup&&(
+          <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:200,padding:"20px"}}>
+            <div style={{background:T.surface,border:`2px solid ${T.gold}`,borderRadius:"16px",padding:"28px 24px",maxWidth:"340px",width:"100%",textAlign:"center"}}>
+              <div style={{fontSize:"40px",marginBottom:"8px"}}>🏁</div>
+              <div style={{fontSize:"18px",fontWeight:"900",color:T.gold,letterSpacing:"1px",marginBottom:"4px"}}>RUNDE 1 ABGESCHLOSSEN</div>
+              <div style={{fontSize:"13px",color:T.faint,marginBottom:"16px"}}>{halftimePopup.matchName}</div>
+              <div style={{background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"10px",padding:"14px",marginBottom:"20px"}}>
+                <div style={{fontSize:"11px",color:T.muted,marginBottom:"4px"}}>Ergebnis Runde 1</div>
+                <div style={{fontSize:"32px",fontWeight:"900",fontFamily:"'Arial Black',sans-serif",color:halftimePopup.t1Winner?T.blue:halftimePopup.t2Winner?T.red:T.muted}}>{halftimePopup.r1Label}</div>
+                {halftimePopup.pts&&<div style={{fontSize:"12px",color:T.faint,marginTop:"4px"}}>{halftimePopup.t1Winner?`🔵 ${t1Name} gewinnt Punkt`:halftimePopup.t2Winner?`🔴 ${t2Name} gewinnt Punkt`:"🤝 Geteilter Punkt"}</div>}
+              </div>
+              <button onClick={()=>{setHalftimePopup(null);setModal({dayId:halftimePopup.dayId,matchId:halftimePopup.matchId,holeIndex:9});}} style={{width:"100%",padding:"14px",background:`linear-gradient(135deg,${T.gold},#A07830)`,border:"none",borderRadius:"10px",color:T.isDark?"#0D2B1A":"white",fontSize:"15px",fontWeight:"900",letterSpacing:"1px",cursor:"pointer",marginBottom:"8px"}}>
+                ⛳ Runde 2 starten →
+              </button>
+              <button onClick={()=>setHalftimePopup(null)} style={{width:"100%",padding:"11px",background:"transparent",border:`1px solid ${T.border}`,borderRadius:"10px",color:T.muted,fontSize:"13px",cursor:"pointer"}}>
+                Schließen
+              </button>
+            </div>
+          </div>
+        )}
+        {activeTab==="stats"&&<StatsTab days={days} t1Name={t1Name} t2Name={t2Name} T={T} captainT1={config.captainT1} captainT2={config.captainT2} allPlayers={[...(config.t1Players||[]),...(config.t2Players||[])]}/>}
         {activeDay&&course&&(
           <>
             <div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"12px"}}>
@@ -2267,7 +2337,7 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
               const ref = matchCardRefs.current[mi] || (matchCardRefs.current[mi]=React.createRef());
               return(
                 <div key={m.id} ref={ref} style={{scrollMarginTop:"76px"}}>
-                  <MatchCard match={m} pars={course.par} t1Name={t1Name} t2Name={t2Name} canEdit={canEdit(m.id,activeDay.id)} isAdmin={isAdmin} T={T} onHoleClick={(matchId,hi)=>setModal({dayId:activeDay.id,matchId,holeIndex:hi})} onReset={doReset}/>
+                  <MatchCard match={m} pars={course.par} t1Name={t1Name} t2Name={t2Name} canEdit={canEdit(m.id,activeDay.id)} isAdmin={isAdmin} T={T} captainT1={config.captainT1} captainT2={config.captainT2} onHoleClick={(matchId,hi)=>setModal({dayId:activeDay.id,matchId,holeIndex:hi})} onReset={doReset}/>
                 </div>
               );
             })}
