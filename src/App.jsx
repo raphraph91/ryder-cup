@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
-const VERSION = "1.14";
+const VERSION = "1.12";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLlzavBNImCRG0JacPZWdVIxezxKiqHcc",
@@ -57,7 +57,7 @@ const GAME_MODES = {
 function calcRoundStatus(scores,pars,s,e){
   let diff=0,played=0,wonAtHole=-1,frozenLabel=null,frozenDiff=0;
   for(let i=s;i<e;i++){
-    const h=scores[i]||{};
+    const h=scores[i];
     if(typeof h.team1==="number"&&typeof h.team2==="number"){
       played++;
       if(h.team1<h.team2)diff++;else if(h.team2<h.team1)diff--;
@@ -97,32 +97,6 @@ function calcTournament(days){
   const s=t1p+t2p;return{t1Confirmed:t1c,t2Confirmed:t2c,t1Projected:Math.round(t1p*10)/10,t2Projected:Math.round(t2p*10)/10,t1WinProb:s>0?Math.round((t1p/s)*100):50,t2WinProb:s>0?Math.round((t2p/s)*100):50,totalPoints:total,needed:total/2+0.5};
 }
 function emptyScores(){return Array.from({length:18},()=>({team1:null,team2:null}));}
-
-// Normalize config loaded from Firestore – fills in missing fields so the
-// rest of the code never has to guard against undefined scores/matches/days.
-function normalizeConfig(cfg){
-  if(!cfg)return cfg;
-  const days=(cfg.days||[]).map(day=>({
-    ...day,
-    matches:(day.matches||[]).map(m=>({
-      ...m,
-      scores: Array.from({length:18},(_,i)=>{
-        const s=(m.scores||[])[i]||{};
-        return{
-          team1: typeof s.team1==="number"?s.team1:null,
-          team2: typeof s.team2==="number"?s.team2:null,
-        };
-      }),
-      t1Pair:   m.t1Pair   || [],
-      t2Pair:   m.t2Pair   || [],
-      t1PlayerIds: m.t1PlayerIds || [],
-      t2PlayerIds: m.t2PlayerIds || [],
-      t1Photos: m.t1Photos || {},
-      t2Photos: m.t2Photos || {},
-    })),
-  }));
-  return{...cfg, days};
-}
 function detectPointChange(oldDays,newDays,t1Name,t2Name){
   if(!oldDays)return null;
   for(let di=0;di<newDays.length;di++){
@@ -154,7 +128,7 @@ function calcStats(days,t1Name,t2Name){
       [0,1].forEach(r=>{
         const rs=calcRoundStatus(m.scores,course.par,r*9,r*9+9);const pts=getPoints(rs);
         if(pts){pairStats[key1].pts+=pts.t1;pairStats[key2].pts+=pts.t2;}
-        for(let i=r*9;i<r*9+9;i++){const sc=m.scores[i]||{};if(typeof sc.team1==="number"&&typeof sc.team2==="number"){if(sc.team1<sc.team2){pairStats[key1].holesWon++;t1TotalHoles++;holeWins.t1[i]++;}else if(sc.team2<sc.team1){pairStats[key2].holesWon++;t2TotalHoles++;holeWins.t2[i]++;}else holeWins.tie[i]++;}}
+        for(let i=r*9;i<r*9+9;i++){const sc=m.scores[i];if(typeof sc.team1==="number"&&typeof sc.team2==="number"){if(sc.team1<sc.team2){pairStats[key1].holesWon++;t1TotalHoles++;holeWins.t1[i]++;}else if(sc.team2<sc.team1){pairStats[key2].holesWon++;t2TotalHoles++;holeWins.t2[i]++;}else holeWins.tie[i]++;}}
       });
     });
   });
@@ -1008,8 +982,7 @@ function NineHoleGrid({scores,pars,startHole,matchId,onHoleClick,canEdit,T}){
   // Sequential: scan forward from startHole, stop at first gap
   let lastConsec=startHole-1;
   for(let i=startHole;i<end;i++){
-    const _s=scores[i]||{};
-    if(typeof _s.team1==="number"&&typeof _s.team2==="number")lastConsec=i;
+    if(typeof scores[i].team1==="number"&&typeof scores[i].team2==="number")lastConsec=i;
     else break;
   }
   const nextEmpty=lastConsec+1; // first hole that can be newly entered
@@ -1020,7 +993,7 @@ function NineHoleGrid({scores,pars,startHole,matchId,onHoleClick,canEdit,T}){
     <div style={{display:"grid",gridTemplateColumns:"repeat(9,1fr)",gap:"3px"}}>
       {Array.from({length:9},(_,i)=>{
         const hn=startHole+i;
-        const s=scores[hn]||{};
+        const s=scores[hn];
         const played=typeof s.team1==="number"&&typeof s.team2==="number";
         const isDead=wonAt>=0&&hn>wonAt;
         const isClickable=canEdit&&(played||hn===nextEmpty);
@@ -1821,12 +1794,12 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
                     // this is the server-side safety net.
                     const m2=activeDay.matches.find(mx=>mx.id===matchId);
                     if(!m2)return;
-                    const alreadyPlayed=!!(m2.scores[hi]&&typeof m2.scores[hi].team1==="number");
+                    const alreadyPlayed=m2.scores[hi]&&typeof m2.scores[hi].team1==="number";
                     if(!alreadyPlayed){
                       const roundStart=hi<9?0:9;
                       let lastConsec=roundStart-1;
                       for(let k=roundStart;k<roundStart+9;k++){
-                        if(m2.scores[k]&&typeof (m2.scores[k]||{}).team1==="number")lastConsec=k;
+                        if(m2.scores[k]&&typeof m2.scores[k].team1==="number")lastConsec=k;
                         else break;
                       }
                       if(hi!==lastConsec+1)return; // not the next hole in sequence
@@ -2010,7 +1983,7 @@ export default function App(){
     setRole(r);setLoading(true);
     try{
       const s=await getDoc(doc(db,"tournaments","ryder2024"));
-      if(s.exists()&&s.data()?.phase==="game"){setConfig(normalizeConfig(s.data()));if(r==="admin")setPhase("adminMenu");else setPhase("game");}
+      if(s.exists()&&s.data()?.phase==="game"){setConfig(s.data());if(r==="admin")setPhase("adminMenu");else setPhase("game");}
       else{if(r==="admin")setPhase("adminMenu");else setPhase("waiting");}
     }catch(e){if(r==="admin")setPhase("adminMenu");else setPhase("waiting");}
     setLoading(false);
@@ -2037,7 +2010,7 @@ export default function App(){
   useEffect(()=>{
     const needsLive=(phase==="game")||(phase==="adminMenu"&&adminSection==="game");
     if(!needsLive)return;
-    const u=onSnapshot(doc(db,"tournaments","ryder2024"),s=>{if(s.exists()&&s.data()?.phase==="game")setConfig(normalizeConfig(s.data()));});
+    const u=onSnapshot(doc(db,"tournaments","ryder2024"),s=>{if(s.exists()&&s.data()?.phase==="game")setConfig(s.data());});
     return()=>u();
   },[phase,adminSection]);
 
