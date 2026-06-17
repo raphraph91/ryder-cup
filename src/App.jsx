@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
-const VERSION = "2.05";
+const VERSION = "2.06";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLlzavBNImCRG0JacPZWdVIxezxKiqHcc",
@@ -851,7 +851,9 @@ function TournamentPlanning({onStart,onBack,T,theme,onThemeToggle}){
   };
   const day1Filled=matchAssign[0]?.every(matchFilled)??false;
   const tab0ok=t1Name.trim()&&t2Name.trim();
-  const tab1ok=t1Players.length>=playersPerSlot&&t2Players.length>=playersPerSlot&&unassigned.length===0&&selectedIds.size>=2;
+  // tab1ok: at least 1 player per team, no selected player left unassigned
+  const selectedUnassigned=selectedPlayers.filter(p=>!team1Ids.has(p.id)&&!team2Ids.has(p.id));
+  const tab1ok=t1Players.length>=1&&t2Players.length>=1&&selectedUnassigned.length===0&&selectedIds.size>=2;
 
   const handleStart=async()=>{
     if(!day1Filled)return;setSaving(true);
@@ -1015,11 +1017,11 @@ function TournamentPlanning({onStart,onBack,T,theme,onThemeToggle}){
                 </div>
               </div>
             )}
-            {selectedIds.size>0&&<div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"14px",fontSize:"11px",color:T.muted}}><span style={{color:T.blue}}>🔵 {t1Name}: {t1Players.length}</span>{" · "}<span style={{color:T.red}}>🔴 {t2Name}: {t2Players.length}</span>{unassigned.length>0&&<span style={{color:"#E05252"}}>{" · "}{unassigned.length} ohne Team</span>}</div>}
+            {selectedIds.size>0&&<div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"14px",fontSize:"11px",color:T.muted}}><span style={{color:T.blue}}>🔵 {t1Name}: {t1Players.length}</span>{" · "}<span style={{color:T.red}}>🔴 {t2Name}: {t2Players.length}</span>{selectedUnassigned.length>0&&<span style={{color:"#E05252"}}>{" · "}{selectedUnassigned.length} ohne Team</span>}</div>}
             <button disabled={!tab1ok} onClick={()=>setTab(2)} style={{width:"100%",padding:"13px",background:tab1ok?`linear-gradient(135deg,${T.gold},#A07830)`:T.elevated,border:"none",borderRadius:"8px",color:tab1ok?T.isDark?"#0D2B1A":"white":T.muted,fontSize:"14px",fontWeight:"900",letterSpacing:"2px",textTransform:"uppercase",cursor:tab1ok?"pointer":"not-allowed",opacity:tab1ok?1:0.5}}>
               Weiter → Matches
             </button>
-            {!tab1ok&&selectedIds.size>0&&<div style={{fontSize:"11px",color:T.faint,textAlign:"center",marginTop:"8px"}}>Alle Spieler einem Team zuordnen · min. {playersPerSlot} pro Team</div>}
+            {!tab1ok&&selectedIds.size>0&&<div style={{fontSize:"11px",color:T.faint,textAlign:"center",marginTop:"8px"}}>Alle ausgewählten Spieler einem Team zuordnen · min. 1 pro Team</div>}
           </>
         )}
 
