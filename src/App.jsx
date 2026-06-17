@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
-const VERSION = "2.00";
+const VERSION = "2.01";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLlzavBNImCRG0JacPZWdVIxezxKiqHcc",
@@ -55,13 +55,28 @@ const GAME_MODES = {
 };
 
 function calcRoundStatus(scores,pars,s,e){
-  let diff=0,played=0;
-  for(let i=s;i<e;i++){const h=scores[i];if(h.team1!==null&&h.team2!==null){played++;if(h.team1<h.team2)diff++;else if(h.team2<h.team1)diff--;}}
-  const left=e-s-played;let won=false,label="AS";
-  if(left===0){won=true;label=diff>0?"1UP":diff<0?"1UP":"AS";}
-  else if(Math.abs(diff)>left){won=true;label=`${Math.abs(diff)}&${left}`;}
+  let diff=0,played=0,won=false,decisionAt=null;
+  for(let i=s;i<e;i++){
+    const h=scores[i];
+    if(h.team1!==null&&h.team2!==null){
+      // Only count this hole if match not yet decided
+      if(!won){
+        played++;
+        if(h.team1<h.team2)diff++;else if(h.team2<h.team1)diff--;
+        const left=e-s-played;
+        // Check if match is decided after this hole
+        if(Math.abs(diff)>left){won=true;decisionAt=i;}
+        else if(left===0){won=true;decisionAt=i;}
+      }
+      // Dead hole: already decided — count as played for UI but don't affect score
+      else{played++;}
+    }
+  }
+  const left=e-s-played;
+  let label="AS";
+  if(won){label=decisionAt!==null&&(e-s-(decisionAt-s+1))>0?`${Math.abs(diff)}&${e-(decisionAt+1)}`:diff>0?"1UP":diff<0?"1UP":"AS";}
   else if(diff!==0){label=`${Math.abs(diff)} UP`;}
-  return{diff,holesPlayed:played,holesLeft:left,label,won};
+  return{diff,holesPlayed:played,holesLeft:left,label,won,decisionAt};
 }
 function getPoints(rs){if(rs.won||rs.holesLeft===0){if(rs.diff>0)return{t1:1,t2:0};if(rs.diff<0)return{t1:0,t2:1};return{t1:0.5,t2:0.5};}return null;}
 function projectedPoints(rs){if(rs.won||rs.holesLeft===0)return getPoints(rs);const a=rs.diff/18;return{t1:0.5+a*0.4,t2:0.5-a*0.4};}
@@ -949,15 +964,29 @@ function ScoreModal({match,holeIndex,t1Name,t2Name,existing,par,onSave,onClose,T
   );
 }
 
-function NineHoleGrid({scores,pars,startHole,matchId,onHoleClick,canEdit,T}){
+function NineHoleGrid({scores,pars,startHole,matchId,onHoleClick,canEdit,T,roundStatus}){
+  // decisionAt is the absolute hole index where the round was decided
+  // holes after that index are "dead" – shown dimmed
+  const decisionAt = roundStatus?.won && roundStatus.decisionAt != null
+    ? roundStatus.decisionAt
+    : null;
   return(
     <div style={{display:"grid",gridTemplateColumns:"repeat(9,1fr)",gap:"3px"}}>
       {scores.slice(startHole,startHole+9).map((s,i)=>{
         const hn=startHole+i,p=pars[hn],played=s.team1!==null&&s.team2!==null;
+        const isDead=decisionAt!==null&&hn>decisionAt;
         let bg=T.holeBg,color=T.holeText,border=`1px solid ${T.border}`;
-        if(played){border="none";if(s.team1<s.team2){bg=T.blue+"25";color=T.blue;}else if(s.team2<s.team1){bg=T.red+"25";color=T.red;}else{bg=T.border;color=T.muted;}}
+        if(played){
+          border="none";
+          if(s.team1<s.team2){bg=T.blue+"25";color=T.blue;}
+          else if(s.team2<s.team1){bg=T.red+"25";color=T.red;}
+          else{bg=T.border;color=T.muted;}
+        }
+        const finalOpacity=isDead?0.32:(canEdit?1:played?0.9:0.6);
+        const finalBorder=isDead?`1px dashed ${T.border}`:border;
+        const finalFilter=isDead?"saturate(0.25)":"none";
         return(
-          <div key={i} style={{borderRadius:"4px",cursor:canEdit?"pointer":"default",background:bg,color,border,userSelect:"none",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"2px 0",minHeight:"32px",opacity:canEdit?1:played?0.9:0.6}} onClick={()=>canEdit&&onHoleClick(matchId,hn)}>
+          <div key={i} style={{borderRadius:"4px",cursor:canEdit?"pointer":"default",background:bg,color,border:finalBorder,userSelect:"none",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"2px 0",minHeight:"32px",opacity:finalOpacity,filter:finalFilter}} onClick={()=>canEdit&&onHoleClick(matchId,hn)}>
             <div style={{fontSize:"9px",fontWeight:"700",lineHeight:1}}>{hn+1}</div>
             <div style={{fontSize:"7px",opacity:0.6,lineHeight:1}}>P{p}</div>
             {played&&<div style={{fontSize:"8px",fontWeight:"900",lineHeight:1}}>{s.team1}:{s.team2}</div>}
@@ -1018,9 +1047,9 @@ function MatchCard({match,pars,t1Name,t2Name,canEdit,isAdmin,onHoleClick,onReset
             <RoundBadge rs={r2} pts={getPoints(r2)} label="Runde 2 (L. 10–18)"/>
           </div>
           <div style={{fontSize:"9px",color:T.faint,letterSpacing:"1px",marginBottom:"3px"}}>RUNDE 1</div>
-          <NineHoleGrid scores={match.scores} pars={pars} startHole={0} matchId={match.id} onHoleClick={onHoleClick} canEdit={canEdit} T={T}/>
+          <NineHoleGrid scores={match.scores} pars={pars} startHole={0} matchId={match.id} onHoleClick={onHoleClick} canEdit={canEdit} T={T} roundStatus={r1}/>
           <div style={{fontSize:"9px",color:T.faint,letterSpacing:"1px",margin:"6px 0 3px"}}>RUNDE 2</div>
-          <NineHoleGrid scores={match.scores} pars={pars} startHole={9} matchId={match.id} onHoleClick={onHoleClick} canEdit={canEdit} T={T}/>
+          <NineHoleGrid scores={match.scores} pars={pars} startHole={9} matchId={match.id} onHoleClick={onHoleClick} canEdit={canEdit} T={T} roundStatus={r2}/>
           {!canEdit&&!isAdmin&&<div style={{marginTop:"8px",fontSize:"10px",color:T.faint,textAlign:"center"}}>🔒 Nur lesbar</div>}
         </div>
       </div>
