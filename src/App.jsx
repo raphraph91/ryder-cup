@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
-const VERSION = "9";
+const VERSION = "2.00";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLlzavBNImCRG0JacPZWdVIxezxKiqHcc",
