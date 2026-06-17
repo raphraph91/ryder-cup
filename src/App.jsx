@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
-const VERSION = "2.09";
+const VERSION = "2.10";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLlzavBNImCRG0JacPZWdVIxezxKiqHcc",
@@ -1590,369 +1590,348 @@ function calcMatchTimeline(match, pars) {
   });
 }
 
-function StatsTab({days,t1Name,t2Name,T,captainT1,captainT2,allPlayers}){
-  const [activeSection, setActiveSection] = useState(0);
-  const stats = calcStats(days,t1Name,t2Name);
-  const scoreDist = calcScoreDistribution(days);
-  const heatmap = calcHoleHeatmap(days);
-  const totalHoles = stats.t1TotalHoles + stats.t2TotalHoles;
-  const t1HolePct = totalHoles > 0 ? Math.round((stats.t1TotalHoles/totalHoles)*100) : 50;
 
-  // Build captain name lookup
-  const captainNames={};
-  if(allPlayers){allPlayers.forEach(p=>{if(p.id===captainT1||p.id===captainT2)captainNames[p.id]=`${p.fn} ${p.ln}`;});}
-
-  const SectionTitle = ({children}) => (
-    <div style={{fontSize:"10px",color:T.gold,letterSpacing:"2px",textTransform:"uppercase",fontWeight:"700",marginBottom:"10px",marginTop:"16px",display:"flex",alignItems:"center",gap:"6px"}}>
-      <div style={{flex:1,height:"1px",background:T.border}}/>{children}<div style={{flex:1,height:"1px",background:T.border}}/>
+// ── Stats Chart Components ────────────────────────────────────────────────────
+function DonutChart({slices,size=110,thickness=18,label,sublabel,T}){
+  const total=slices.reduce((a,s)=>a+s.value,0);
+  if(!total)return<div style={{width:size,height:size,borderRadius:"50%",background:T.elevated,display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:T.faint}}>—</div>;
+  let angle=-90;
+  const cx=size/2,cy=size/2,r=size/2-thickness/2-3;
+  const arcs=slices.map(s=>{
+    const sweep=(s.value/total)*360;
+    const a1=(angle*Math.PI)/180,a2=((angle+sweep-0.3)*Math.PI)/180;
+    const x1=cx+r*Math.cos(a1),y1=cy+r*Math.sin(a1),x2=cx+r*Math.cos(a2),y2=cy+r*Math.sin(a2);
+    const d=`M ${x1} ${y1} A ${r} ${r} 0 ${sweep>180?1:0} 1 ${x2} ${y2}`;
+    angle+=sweep;return{...s,d};
+  });
+  return(
+    <div style={{position:"relative",width:size,height:size,flexShrink:0}}>
+      <svg width={size} height={size}>
+        <circle cx={cx} cy={cy} r={r} fill="none" stroke={T.elevated} strokeWidth={thickness}/>
+        {arcs.map((a,i)=><path key={i} d={a.d} fill="none" stroke={a.color} strokeWidth={thickness-2} strokeLinecap="butt"/>)}
+      </svg>
+      <div style={{position:"absolute",inset:0,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center"}}>
+        <div style={{fontSize:15,fontWeight:900,color:T.cream,lineHeight:1,fontFamily:"'Arial Black',sans-serif"}}>{label}</div>
+        {sublabel&&<div style={{fontSize:8,color:T.muted,marginTop:2,textAlign:"center"}}>{sublabel}</div>}
+      </div>
     </div>
   );
+}
 
-  const PairRow = ({pair,maxPts}) => {
-    const pct = maxPts>0?(pair.pts/maxPts)*100:0;
-    const color = pair.team==="t1"?T.blue:T.red;
-    const captName=captainT1&&captainNames[captainT1];const captName2=captainT2&&captainNames[captainT2];
-    const isCapt=(pair.team==="t1"&&captName&&pair.name.includes(captName.split(" ")[0]))||(pair.team==="t2"&&captName2&&pair.name.includes(captName2.split(" ")[0]));
-    return(
-      <div style={{marginBottom:"10px"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"4px"}}>
-          <div style={{display:"flex",alignItems:"center",gap:"5px"}}>
-            <div style={{fontSize:"12px",color:T.cream,fontWeight:"600"}}>{pair.name}</div>
-            {isCapt&&<span style={{fontSize:"9px",background:T.gold+"33",color:T.gold,borderRadius:"4px",padding:"1px 5px",fontWeight:"700"}}>🎖️ C</span>}
+function ColumnChart({data,height=110,T}){
+  const max=Math.max(...data.map(d=>d.value),1);
+  return(
+    <div style={{display:"flex",alignItems:"flex-end",gap:4,height:height+32,paddingBottom:24,position:"relative"}}>
+      {data.map((d,i)=>{
+        const h=Math.max(4,(d.value/max)*height);
+        return(
+          <div key={i} style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center"}}>
+            <div style={{fontSize:9,color:d.color,fontWeight:700,marginBottom:3}}>{d.value||""}</div>
+            <div style={{width:"100%",height:h,background:`linear-gradient(180deg,${d.color},${d.color}88)`,borderRadius:"4px 4px 0 0",boxShadow:`0 0 8px ${d.color}44`,transition:"height 0.5s"}}/>
+            <div style={{position:"absolute",bottom:0,fontSize:8,color:T.muted,textAlign:"center",width:`${100/data.length}%`,lineHeight:1.2,left:`${(i/data.length)*100}%`}}>{d.short}</div>
           </div>
-          <div style={{display:"flex",gap:"12px",fontSize:"11px"}}><span style={{color:T.muted}}>{pair.holesWon} Löcher</span><span style={{color,fontWeight:"700"}}>{fmt(pair.pts)} Pts</span></div>
-        </div>
-        <div style={{height:"6px",background:T.elevated,borderRadius:"3px",overflow:"hidden"}}><div style={{width:`${pct}%`,height:"100%",background:color,borderRadius:"3px",transition:"width 0.6s"}}/></div>
-      </div>
-    );
-  };
+        );
+      })}
+    </div>
+  );
+}
 
-  const maxT1 = Math.max(...stats.t1Pairs.map(p=>p.pts),1);
-  const maxT2 = Math.max(...stats.t2Pairs.map(p=>p.pts),1);
-
-  // Score distribution bars per pair
-  const ScoreDistCard = ({dist}) => {
-    const color = dist.team==="t1"?T.blue:T.red;
-    const cats = [
-      { key:"eagle", label:"🦅 Eagle", color:"#FFD700" },
-      { key:"birdie", label:"🐦 Birdie", color:"#4CAF50" },
-      { key:"par", label:"⬜ Par", color:T.muted },
-      { key:"bogey", label:"🔴 Bogey", color:"#FF9800" },
-      { key:"double", label:"💀 Doppel", color:"#E05252" },
-      { key:"worse", label:"⛔ +3 oder mehr", color:"#8B0000" },
-    ];
-    const maxVal = Math.max(...cats.map(c=>dist[c.key]),1);
-    return(
-      <div style={{background:T.isDark?"#0A2014":T.elevated,borderRadius:"10px",padding:"12px",marginBottom:"10px",border:`1px solid ${color}33`}}>
-        <div style={{fontSize:"12px",fontWeight:"700",color,marginBottom:"10px"}}>{dist.key}</div>
-        {cats.map(cat=>{
-          const val = dist[cat.key];
-          const pct = (val/maxVal)*100;
-          const pctOfTotal = dist.total>0?Math.round((val/dist.total)*100):0;
-          return(
-            <div key={cat.key} style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:"6px"}}>
-              <div style={{width:"90px",fontSize:"10px",color:T.muted,flexShrink:0}}>{cat.label}</div>
-              <div style={{flex:1,height:"14px",background:T.elevated,borderRadius:"7px",overflow:"hidden",border:`1px solid ${T.border}`}}>
-                <div style={{width:`${pct}%`,height:"100%",background:cat.color,borderRadius:"7px",transition:"width 0.6s",opacity:val===0?0.2:1}}/>
-              </div>
-              <div style={{width:"36px",textAlign:"right",fontSize:"11px",fontWeight:"700",color:val>0?cat.color:T.faint}}>{val>0?`${val} (${pctOfTotal}%)`:"-"}</div>
-            </div>
-          );
-        })}
-        {dist.total===0&&<div style={{fontSize:"11px",color:T.faint,textAlign:"center",padding:"8px"}}>Noch keine Scores</div>}
-      </div>
-    );
-  };
-
-  // Hole heatmap
-  const HoleHeatmap = () => {
-    const activeHoles = heatmap.filter(h=>h.total>0);
-    if (activeHoles.length === 0) return <div style={{fontSize:"12px",color:T.faint,textAlign:"center",padding:"20px"}}>Noch keine Scores eingetragen</div>;
-    return(
-      <div>
-        <div style={{display:"flex",gap:"8px",marginBottom:"10px",fontSize:"10px",color:T.muted,justifyContent:"center"}}>
-          <span style={{display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"12px",height:"12px",borderRadius:"2px",background:T.blue}}/> {t1Name}</span>
-          <span style={{display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"12px",height:"12px",borderRadius:"2px",background:"#888"}}/> Unentschieden</span>
-          <span style={{display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"12px",height:"12px",borderRadius:"2px",background:T.red}}/> {t2Name}</span>
-        </div>
-        {[0,1].map(row=>(
-          <div key={row} style={{display:"grid",gridTemplateColumns:"repeat(9,1fr)",gap:"4px",marginBottom:"4px"}}>
-            {heatmap.slice(row*9, row*9+9).map((h,i)=>{
-              const hi = row*9+i;
-              let bg = T.elevated; let txt = T.faint; let intensity = 0;
-              if (h.total > 0) {
-                const t1pct = h.t1/h.total; const t2pct = h.t2/h.total;
-                intensity = Math.max(t1pct, t2pct);
-                if (h.t1 > h.t2) { bg = T.blue; txt = "#fff"; }
-                else if (h.t2 > h.t1) { bg = T.red; txt = "#fff"; }
-                else { bg = "#666"; txt = "#fff"; }
-              }
+function HoleHeatmap({holeWins,T}){
+  return(
+    <div>
+      {[0,1].map(r=>(
+        <div key={r} style={{marginBottom:10}}>
+          <div style={{fontSize:8,color:T.faint,letterSpacing:1,marginBottom:4,fontWeight:700}}>{r===0?"R1 · L. 1–9":"R2 · L. 10–18"}</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(9,1fr)",gap:3}}>
+            {Array.from({length:9},(_,i)=>{
+              const hi=r*9+i;
+              const t1=holeWins.t1[hi]||0,t2=holeWins.t2[hi]||0,tie=holeWins.tie[hi]||0;
+              const w=t1>0?"t1":t2>0?"t2":tie>0?"tie":"none";
+              const bg=w==="t1"?T.blue+"44":w==="t2"?T.red+"44":w==="tie"?T.muted+"33":T.elevated;
+              const bd=w==="t1"?T.blue:w==="t2"?T.red:T.border;
               return(
-                <div key={hi} style={{borderRadius:"6px",padding:"4px 2px",background:bg,opacity:h.total===0?0.25:0.4+intensity*0.6,textAlign:"center",minHeight:"40px",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",transition:"opacity 0.3s"}}>
-                  <div style={{fontSize:"9px",color:txt,fontWeight:"700",opacity:0.8}}>L{hi+1}</div>
-                  {h.total>0&&(
-                    <>
-                      <div style={{fontSize:"11px",color:txt,fontWeight:"900",lineHeight:1}}>{h.t1>h.t2?h.t1:h.t2>h.t1?h.t2:h.tie}</div>
-                      <div style={{fontSize:"8px",color:txt,opacity:0.7}}>/{h.total}</div>
-                    </>
-                  )}
+                <div key={hi} style={{background:bg,border:`1.5px solid ${bd}`,borderRadius:5,padding:"5px 0",textAlign:"center"}}>
+                  <div style={{fontSize:9,fontWeight:700,color:T.cream}}>{hi+1}</div>
+                  <div style={{fontSize:11}}>{w==="t1"?"🔵":w==="t2"?"🔴":w==="tie"?"🤝":"·"}</div>
                 </div>
               );
             })}
           </div>
-        ))}
-        <div style={{fontSize:"10px",color:T.faint,textAlign:"center",marginTop:"8px"}}>Farbe = dominierendes Team · Intensität = Dominanz</div>
-      </div>
-    );
-  };
+        </div>
+      ))}
+    </div>
+  );
+}
 
-  // Match timeline
-  const MatchTimelines = () => {
-    const allMatches = [];
-    days.forEach(day => {
-      const course = COURSES[day.courseKey]||Object.values(COURSES)[0];
-      day.matches.forEach(m => {
-        const timeline = calcMatchTimeline(m, course.par);
-        const hasData = m.scores.some(s=>s.team1!==null);
-        if (hasData) allMatches.push({match:m, timeline, day});
-      });
-    });
-    if (allMatches.length===0) return <div style={{fontSize:"12px",color:T.faint,textAlign:"center",padding:"20px"}}>Noch keine Scores eingetragen</div>;
-    return(
-      <div>
-        {allMatches.map(({match,timeline,day},idx)=>{
-          const played = match.scores.filter(s=>s.team1!==null).length;
-          const lastDiff = timeline[played-1]||0;
-          const maxAbs = Math.max(...timeline.map(Math.abs),1);
-          const W=280; const H=60; const pad=8;
-          const xStep=(W-pad*2)/17;
-          const yMid=H/2;
-          const yScale=(H/2-pad)/Math.max(maxAbs,2);
-          const points=timeline.slice(0,played).map((v,i)=>`${pad+i*xStep},${yMid-v*yScale}`).join(" ");
-          const lineColor=lastDiff>0?T.blue:lastDiff<0?T.red:T.muted;
-          return(
-            <div key={idx} style={{background:T.isDark?"#0A2014":T.elevated,borderRadius:"10px",padding:"12px",marginBottom:"10px",border:`1px solid ${T.border}`}}>
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"8px"}}>
-                <div>
-                  <div style={{fontSize:"12px",fontWeight:"700",color:T.cream}}>{match.name} <span style={{fontSize:"10px",color:T.faint}}>· {day.label}</span></div>
-                  <div style={{fontSize:"10px",color:T.blue}}>{(match.t1Pair||[]).join(" & ")} <span style={{color:T.muted}}>vs</span> <span style={{color:T.red}}>{(match.t2Pair||[]).join(" & ")}</span></div>
-                </div>
-                <div style={{textAlign:"right"}}>
-                  <div style={{fontSize:"16px",fontWeight:"900",color:lineColor,fontFamily:"'Arial Black',sans-serif"}}>{lastDiff===0?"AS":lastDiff>0?`${lastDiff} UP`:`${Math.abs(lastDiff)} UP`}</div>
-                  <div style={{fontSize:"9px",color:T.faint}}>{lastDiff>0?t1Name:lastDiff<0?t2Name:"Gleich"}</div>
-                </div>
-              </div>
-              <div style={{overflowX:"auto"}}>
-                <svg width={W} height={H} style={{display:"block",margin:"0 auto"}}>
-                  {/* Zero line */}
-                  <line x1={pad} y1={yMid} x2={W-pad} y2={yMid} stroke={T.border} strokeWidth="1" strokeDasharray="3,3"/>
-                  {/* Round divider at hole 9 */}
-                  <line x1={pad+8*xStep} y1={pad} x2={pad+8*xStep} y2={H-pad} stroke={T.border} strokeWidth="1" strokeDasharray="2,4" opacity="0.5"/>
-                  {/* Fill under the line */}
-                  {played>1&&(
-                    <polygon
-                      points={`${pad},${yMid} ${points} ${pad+(played-1)*xStep},${yMid}`}
-                      fill={lineColor} opacity="0.15"/>
-                  )}
-                  {/* Line */}
-                  {played>1&&<polyline points={points} fill="none" stroke={lineColor} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>}
-                  {/* Current dot */}
-                  {played>0&&<circle cx={pad+(played-1)*xStep} cy={yMid-lastDiff*yScale} r="4" fill={lineColor}/>}
-                  {/* Hole labels */}
-                  {[0,8,17].map(i=>(
-                    <text key={i} x={pad+i*xStep} y={H-1} fontSize="7" fill={T.faint} textAnchor="middle">L{i+1}</text>
-                  ))}
-                  {/* +/- labels */}
-                  <text x={pad-4} y={yMid-yScale*2+3} fontSize="7" fill={T.blue} textAnchor="end">+2</text>
-                  <text x={pad-4} y={yMid+yScale*2+3} fontSize="7" fill={T.red} textAnchor="end">-2</text>
-                </svg>
-              </div>
-              <div style={{display:"flex",justifyContent:"space-between",fontSize:"9px",color:T.faint,marginTop:"4px",paddingTop:"4px",borderTop:`1px solid ${T.border}`}}>
-                <span>{played}/18 Löcher gespielt</span>
-                <span>R1: {pad} · R2: 10–18</span>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    );
-  };
+// ── New StatsTab ──────────────────────────────────────────────────────────────
+function StatsTab({days,t1Name,t2Name,T,captainT1,captainT2,allPlayers}){
+  const [sec,setSec]=useState(0);
+  const stats=calcStats(days,t1Name,t2Name);
+  const scoreDist=calcScoreDistribution(days);
+  const totalHoles=stats.t1TotalHoles+stats.t2TotalHoles+Object.values(stats.holeWins.tie||[]).reduce((a,b)=>a+b,0);
+  const tieHoles=Array.from({length:18},(_,i)=>stats.holeWins.tie[i]||0).reduce((a,b)=>a+b,0);
 
-  const sections = ["Übersicht","Scores","Heatmap","Verlauf"];
+  // Aggregate score distribution across all pairs
+  const aggDist={eagle:0,birdie:0,par:0,bogey:0,double:0,worse:0};
+  scoreDist.forEach(p=>{aggDist.eagle+=p.eagle;aggDist.birdie+=p.birdie;aggDist.par+=p.par;aggDist.bogey+=p.bogey;aggDist.double+=p.double;aggDist.worse+=p.worse;});
+  const distSlices=[
+    {label:"Eagle",short:"Eagle",value:aggDist.eagle,color:"#FFD700"},
+    {label:"Birdie",short:"Birdie",value:aggDist.birdie,color:"#4CAF50"},
+    {label:"Par",short:"Par",value:aggDist.par,color:T.muted},
+    {label:"Bogey",short:"Bogey",value:aggDist.bogey,color:"#FF9800"},
+    {label:"Doppel",short:"Doppel",value:aggDist.double+(aggDist.worse||0),color:"#E05252"},
+  ].filter(s=>s.value>0);
+
+  // Captain name lookup
+  const captNames={};
+  if(allPlayers)allPlayers.forEach(p=>{if(p.id===captainT1||p.id===captainT2)captNames[p.id]=`${p.fn} ${p.ln}`;});
+
+  const totalPts=(stats.t1Pairs.reduce((a,p)=>a+p.pts,0))+(stats.t2Pairs.reduce((a,p)=>a+p.pts,0));
+  const t1TotalPts=stats.t1Pairs.reduce((a,p)=>a+p.pts,0);
+  const t2TotalPts=stats.t2Pairs.reduce((a,p)=>a+p.pts,0);
+  const fmt=v=>Number.isInteger(v)?v:v.toFixed(1);
+
+  const SECTIONS=["ÜBERSICHT","PAARE","SCHLÄGE","LÖCHER"];
+  const Card=({children,style})=>(<div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:10,...style}}>{children}</div>);
+  const ST=({children})=>(<div style={{fontSize:10,color:T.gold,letterSpacing:2,fontWeight:700,margin:"16px 0 10px",display:"flex",alignItems:"center",gap:6}}><div style={{flex:1,height:1,background:T.border}}/>{children}<div style={{flex:1,height:1,background:T.border}}/></div>);
 
   return(
-    <div style={{paddingBottom:"20px"}}>
+    <div style={{paddingBottom:20}}>
       {/* Section tabs */}
-      <div style={{display:"flex",gap:"6px",marginBottom:"16px",overflowX:"auto",paddingBottom:"2px"}}>
-        {sections.map((s,i)=>(
-          <button key={i} onClick={()=>setActiveSection(i)}
-            style={{padding:"7px 14px",borderRadius:"20px",border:`1px solid ${activeSection===i?T.gold:T.border}`,background:activeSection===i?T.gold+"22":"transparent",color:activeSection===i?T.gold:T.muted,fontSize:"11px",fontWeight:activeSection===i?"700":"400",cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
-            {["📊","🎯","🗺️","📈"][i]} {s}
+      <div style={{display:"flex",borderBottom:`1px solid ${T.border}`,background:T.surface,borderRadius:"8px 8px 0 0",overflow:"hidden",marginBottom:12}}>
+        {SECTIONS.map((s,i)=>(
+          <button key={i} onClick={()=>setSec(i)} style={{flex:1,padding:"9px 2px",background:sec===i?T.elevated:"transparent",border:"none",borderBottom:`2px solid ${sec===i?T.gold:"transparent"}`,color:sec===i?T.gold:T.muted,fontSize:9,fontWeight:sec===i?700:400,cursor:"pointer",letterSpacing:0.5,textTransform:"uppercase"}}>
+            {s}
           </button>
         ))}
       </div>
 
-      {/* ── Overview ── */}
-      {activeSection===0&&(
-        <>
-          <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"12px"}}>
-            <div style={{fontSize:"11px",color:T.muted,letterSpacing:"1px",marginBottom:"10px",textTransform:"uppercase"}}>Gewonnene Löcher</div>
-            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:"8px"}}>
-              <div><div style={{fontSize:"11px",color:T.blue,fontWeight:"700"}}>🔵 {t1Name}</div><div style={{fontSize:"32px",fontWeight:"900",color:T.blue,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{stats.t1TotalHoles}</div></div>
-              <div style={{textAlign:"right"}}><div style={{fontSize:"11px",color:T.red,fontWeight:"700"}}>🔴 {t2Name}</div><div style={{fontSize:"32px",fontWeight:"900",color:T.red,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{stats.t2TotalHoles}</div></div>
+      {/* ── ÜBERSICHT ── */}
+      {sec===0&&(<>
+        <Card>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <div style={{textAlign:"center"}}>
+              <div style={{fontSize:10,color:T.blue,fontWeight:700,letterSpacing:1,marginBottom:2}}>{t1Name}</div>
+              <div style={{fontSize:52,fontWeight:900,color:T.blue,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{fmt(t1TotalPts)}</div>
+              <div style={{fontSize:10,color:T.faint}}>Punkte</div>
             </div>
-            <div style={{height:"12px",borderRadius:"6px",overflow:"hidden",display:"flex"}}><div style={{width:`${t1HolePct}%`,background:T.blue,transition:"width 0.6s"}}/><div style={{flex:1,background:T.red}}/></div>
+            <div style={{textAlign:"center"}}>
+              <div style={{fontSize:9,color:T.gold}}>von {fmt(totalPts)}</div>
+              <div style={{fontSize:22,color:T.gold,marginTop:4}}>⚔️</div>
+            </div>
+            <div style={{textAlign:"center"}}>
+              <div style={{fontSize:10,color:T.red,fontWeight:700,letterSpacing:1,marginBottom:2}}>{t2Name}</div>
+              <div style={{fontSize:52,fontWeight:900,color:T.red,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{fmt(t2TotalPts)}</div>
+              <div style={{fontSize:10,color:T.faint}}>Punkte</div>
+            </div>
           </div>
-          <SectionTitle>🔵 {t1Name}</SectionTitle>
-          <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"12px"}}>
-            {stats.t1Pairs.length===0?<div style={{fontSize:"12px",color:T.faint,textAlign:"center"}}>Noch keine Daten</div>:stats.t1Pairs.map((p,i)=><PairRow key={i} pair={p} maxPts={maxT1}/>)}
-          </div>
-          <SectionTitle>🔴 {t2Name}</SectionTitle>
-          <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"12px"}}>
-            {stats.t2Pairs.length===0?<div style={{fontSize:"12px",color:T.faint,textAlign:"center"}}>Noch keine Daten</div>:stats.t2Pairs.map((p,i)=><PairRow key={i} pair={p} maxPts={maxT2}/>)}
-          </div>
-          <SectionTitle>🌟 Top Performer</SectionTitle>
-          <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px"}}>
-            {stats.allPairs.filter(p=>p.pts>0).length===0?<div style={{fontSize:"12px",color:T.faint,textAlign:"center"}}>Noch keine abgeschlossenen Runden</div>:
-              stats.allPairs.filter(p=>p.pts>0).sort((a,b)=>b.pts-a.pts).slice(0,3).map((p,i)=>{
-                const color=p.team==="t1"?T.blue:T.red;
-                return(<div key={i} style={{display:"flex",alignItems:"center",gap:"12px",padding:"10px",background:T.elevated,borderRadius:"8px",marginBottom:"8px",border:`1px solid ${color}33`}}>
-                  <div style={{fontSize:"20px"}}>{"🥇🥈🥉"[i]}</div>
-                  <div style={{flex:1}}><div style={{fontSize:"12px",fontWeight:"700",color}}>{p.name}</div><div style={{fontSize:"10px",color:T.faint}}>{p.team==="t1"?t1Name:t2Name} · {p.holesWon} Löcher</div></div>
-                  <div style={{fontSize:"20px",fontWeight:"900",color,fontFamily:"'Arial Black',sans-serif"}}>{fmt(p.pts)}</div>
-                </div>);
-              })}
-          </div>
-        </>
-      )}
+          {totalPts>0&&(<>
+            <div style={{height:14,borderRadius:7,overflow:"hidden",display:"flex"}}>
+              <div style={{width:`${(t1TotalPts/totalPts)*100}%`,background:`linear-gradient(90deg,${T.blue},${T.blue}cc)`,boxShadow:`0 0 10px ${T.blue}66`,transition:"width 0.6s"}}/>
+              <div style={{flex:1,background:`linear-gradient(90deg,${T.red}cc,${T.red})`,boxShadow:`0 0 10px ${T.red}66`}}/>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:T.muted,marginTop:4}}>
+              <span style={{color:T.blue}}>{Math.round((t1TotalPts/totalPts)*100)}% Siegchance</span>
+              <span style={{color:T.red}}>{Math.round((t2TotalPts/totalPts)*100)}%</span>
+            </div>
+          </>)}
+        </Card>
 
-      {/* ── Score Distribution ── */}
-      {activeSection===1&&(
-        <>
-          <div style={{background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"14px",fontSize:"11px",color:T.muted}}>
-            🎯 Score-Verteilung pro Pair — relativ zu Par
-          </div>
-          {scoreDist.length===0&&<div style={{fontSize:"12px",color:T.faint,textAlign:"center",padding:"30px"}}>Noch keine Scores</div>}
-          {scoreDist.filter(d=>d.team==="t1").length>0&&<div style={{fontSize:"10px",color:T.blue,letterSpacing:"2px",fontWeight:"700",marginBottom:"8px"}}>🔵 {t1Name}</div>}
-          {scoreDist.filter(d=>d.team==="t1").map((d,i)=><ScoreDistCard key={i} dist={d}/>)}
-          {scoreDist.filter(d=>d.team==="t2").length>0&&<div style={{fontSize:"10px",color:T.red,letterSpacing:"2px",fontWeight:"700",marginBottom:"8px",marginTop:"12px"}}>🔴 {t2Name}</div>}
-          {scoreDist.filter(d=>d.team==="t2").map((d,i)=><ScoreDistCard key={i} dist={d}/>)}
-        </>
-      )}
+        <div style={{display:"flex",gap:10}}>
+          <Card style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
+            <div style={{fontSize:9,color:T.gold,letterSpacing:1,fontWeight:700}}>LÖCHER</div>
+            <DonutChart size={90} thickness={16} T={T}
+              slices={[{value:stats.t1TotalHoles,color:T.blue},{value:stats.t2TotalHoles,color:T.red},{value:tieHoles,color:T.muted}]}
+              label={`${stats.t1TotalHoles}/${stats.t2TotalHoles}`} sublabel="Gew."/>
+            <div style={{fontSize:9,textAlign:"center"}}>
+              <span style={{color:T.blue}}>🔵{stats.t1TotalHoles}</span>{" "}<span style={{color:T.muted}}>🤝{tieHoles}</span>{" "}<span style={{color:T.red}}>🔴{stats.t2TotalHoles}</span>
+            </div>
+          </Card>
+          <Card style={{flex:1,display:"flex",flexDirection:"column",alignItems:"center",gap:8}}>
+            <div style={{fontSize:9,color:T.gold,letterSpacing:1,fontWeight:700}}>SCHLÄGE</div>
+            <DonutChart size={90} thickness={16} T={T}
+              slices={distSlices.map(s=>({value:s.value,color:s.color}))}
+              label={`${distSlices.reduce((a,s)=>a+s.value,0)}`} sublabel="Total"/>
+            <div style={{fontSize:9,color:T.faint}}>
+              🦅{aggDist.eagle} 🐦{aggDist.birdie} ⬜{aggDist.par}
+            </div>
+          </Card>
+        </div>
 
-      {/* ── Hole Heatmap ── */}
-      {activeSection===2&&(
-        <>
-          <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px"}}>
-            <div style={{fontSize:"11px",color:T.muted,letterSpacing:"1px",marginBottom:"14px",textTransform:"uppercase"}}>Loch-Heatmap – Wer dominiert welches Loch?</div>
-            <HoleHeatmap/>
-          </div>
-          {/* Best/worst holes summary */}
-          {heatmap.filter(h=>h.total>0).length>0&&(
-            <>
-              <SectionTitle>💪 Stärkste Löcher</SectionTitle>
-              <div style={{background:T.isDark?T.cardBg:T.surface,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px"}}>
-                {[...heatmap].filter(h=>h.total>0).sort((a,b)=>{
-                  const aEdge=Math.abs(a.t1-a.t2)/a.total;const bEdge=Math.abs(b.t1-b.t2)/b.total;return bEdge-aEdge;
-                }).slice(0,5).map((h,i)=>{
-                  const winner=h.t1>h.t2?t1Name:h.t2>h.t1?t2Name:null;
-                  const color=h.t1>h.t2?T.blue:h.t2>h.t1?T.red:T.muted;
-                  const pct=Math.round(Math.max(h.t1,h.t2)/h.total*100);
-                  return(
-                    <div key={i} style={{display:"flex",alignItems:"center",gap:"10px",padding:"8px 0",borderBottom:i<4?`1px solid ${T.border}`:"none"}}>
-                      <div style={{width:"32px",height:"32px",borderRadius:"8px",background:color+"22",border:`1px solid ${color}44`,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:"900",fontSize:"13px",color}}>{h.hole}</div>
-                      <div style={{flex:1}}><div style={{fontSize:"12px",fontWeight:"600",color:winner?color:T.muted}}>{winner||"Ausgeglichen"}</div><div style={{fontSize:"10px",color:T.faint}}>{h.total} gespielt</div></div>
-                      <div style={{fontSize:"14px",fontWeight:"900",color}}>{pct}%</div>
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </>
-      )}
-
-      {/* ── Match Timeline ── */}
-      {activeSection===3&&(
-        <>
-          <div style={{background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"14px",fontSize:"11px",color:T.muted}}>
-            📈 Gesamtverlauf + Einzelmatches — 🔵 oben = {t1Name} führt
-          </div>
-
-          {/* Day cumulative chart */}
-          {(()=>{
-            // Collect all matches across all days in order, compute cumulative point diff
-            const points=[];let cumT1=0,cumT2=0;
-            days.forEach((day,di)=>{
-              const course=COURSES[day.courseKey]||Object.values(COURSES)[0];
-              day.matches.forEach((m,mi)=>{
-                [0,1].forEach(r=>{
-                  const rs=calcRoundStatus(m.scores,course.par,r*9,r*9+9);
-                  const pt=getPoints(rs);
-                  if(pt){cumT1+=pt.t1;cumT2+=pt.t2;}
-                  points.push({cumT1,cumT2,label:`T${di+1}M${mi+1}R${r+1}`,done:pt!==null});
-                });
-              });
-            });
-            const played=points.filter(p=>p.done);
-            if(played.length<2)return<div style={{background:T.cardBg,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"20px",textAlign:"center",marginBottom:"14px",fontSize:"12px",color:T.faint}}>Noch keine abgeschlossenen Runden für Gesamtverlauf</div>;
-            const W=320;const H=80;const pad=12;const xStep=(W-pad*2)/Math.max(played.length-1,1);
-            const maxVal=Math.max(...played.map(p=>Math.max(p.cumT1,p.cumT2)),1);
-            const yScale=(H-pad*2)/maxVal;
-            const t1pts=played.map((p,i)=>[`${pad+i*xStep}`,`${H-pad-p.cumT1*yScale}`].join(",")).join(" ");
-            const t2pts=played.map((p,i)=>[`${pad+i*xStep}`,`${H-pad-p.cumT2*yScale}`].join(",")).join(" ");
-            const last=played[played.length-1];
-            const diff=last.cumT1-last.cumT2;
+        <ST>🏆 MATCH ERGEBNISSE</ST>
+        {days.map(day=>{
+          const course=COURSES[day.courseKey]||Object.values(COURSES)[0];
+          return day.matches.map((m,mi)=>{
+            const r1=calcRoundStatus(m.scores,course.par,0,9);
+            const r2=calcRoundStatus(m.scores,course.par,9,18);
             return(
-              <div style={{background:T.cardBg,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"14px"}}>
-                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:"12px"}}>
-                  <div style={{fontSize:"12px",fontWeight:"700",color:T.cream}}>Gesamtverlauf · alle Tage</div>
-                  <div style={{textAlign:"right"}}>
-                    <span style={{color:T.blue,fontWeight:"900",fontSize:"16px"}}>{fmt(last.cumT1)}</span>
-                    <span style={{color:T.muted,fontSize:"12px"}}> : </span>
-                    <span style={{color:T.red,fontWeight:"900",fontSize:"16px"}}>{fmt(last.cumT2)}</span>
-                  </div>
-                </div>
-                <svg width="100%" viewBox={`0 0 ${W} ${H}`} style={{display:"block"}}>
-                  {/* grid lines */}
-                  {[0.25,0.5,0.75,1].map(f=>(
-                    <line key={f} x1={pad} y1={H-pad-f*maxVal*yScale} x2={W-pad} y2={H-pad-f*maxVal*yScale} stroke={T.border} strokeWidth="0.5" strokeDasharray="3,4"/>
-                  ))}
-                  {/* day dividers */}
-                  {(()=>{let idx=0;return days.map((day,di)=>{const n=day.matches.length*2;const x=pad+(idx+n-1)*xStep;idx+=n;return di<days.length-1?<line key={di} x1={x} y1={pad} x2={x} y2={H-pad} stroke={T.border} strokeWidth="0.8" strokeDasharray="2,4" opacity="0.6"/>:null;});})()}
-                  {/* t2 area + line */}
-                  <polyline points={t2pts} fill="none" stroke={T.red} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.6"/>
-                  {/* t1 area + line */}
-                  <polyline points={t1pts} fill="none" stroke={T.blue} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/>
-                  {/* end dots */}
-                  {played.length>0&&<>
-                    <circle cx={pad+(played.length-1)*xStep} cy={H-pad-last.cumT1*yScale} r="4" fill={T.blue}/>
-                    <circle cx={pad+(played.length-1)*xStep} cy={H-pad-last.cumT2*yScale} r="4" fill={T.red}/>
-                  </>}
-                  {/* labels */}
-                  <text x={pad} y={H-1} fontSize="7" fill={T.faint}>Start</text>
-                  {played.length>1&&<text x={pad+(played.length-1)*xStep} y={H-1} fontSize="7" fill={T.faint} textAnchor="end">Jetzt</text>}
-                  {days.map((day,di)=>{
-                    let idx=0;days.slice(0,di).forEach(d=>idx+=d.matches.length*2);
-                    const x=pad+idx*xStep;
-                    return<text key={di} x={x+2} y={pad+8} fontSize="7" fill={T.gold} opacity="0.7">T{di+1}</text>;
+              <Card key={m.id} style={{padding:"8px 12px"}}>
+                <div style={{fontSize:10,color:T.gold,fontWeight:700,marginBottom:6}}>{m.name}</div>
+                <div style={{display:"flex",gap:6}}>
+                  {[{label:"Runde 1",rs:r1},{label:"Runde 2",rs:r2}].map((r,j)=>{
+                    const won=r.rs.won||r.rs.holesLeft===0;
+                    const winner=r.rs.diff>0?"t1":r.rs.diff<0?"t2":null;
+                    const active=r.rs.holesPlayed>0;
+                    return(
+                      <div key={j} style={{flex:1,background:T.elevated,borderRadius:6,padding:"6px 0",textAlign:"center",border:`1px solid ${winner==="t1"?T.blue+"66":winner==="t2"?T.red+"66":T.border}`}}>
+                        <div style={{fontSize:8,color:T.faint}}>{r.label}</div>
+                        <div style={{fontSize:18,fontWeight:900,color:winner==="t1"?T.blue:winner==="t2"?T.red:T.muted,fontFamily:"'Arial Black',sans-serif",lineHeight:1.1}}>{active?r.rs.label:"—"}</div>
+                        {winner&&<div style={{fontSize:9,marginTop:2}}>{winner==="t1"?"🔵":"🔴"}</div>}
+                      </div>
+                    );
                   })}
-                </svg>
-                <div style={{display:"flex",gap:"12px",justifyContent:"center",marginTop:"8px",fontSize:"10px",color:T.muted}}>
-                  <span style={{display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"16px",height:"2px",background:T.blue,borderRadius:"1px"}}/>{t1Name}</span>
-                  <span style={{display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"16px",height:"2px",background:T.red,borderRadius:"1px",opacity:0.6}}/>{t2Name}</span>
+                </div>
+              </Card>
+            );
+          });
+        })}
+      </>)}
+
+      {/* ── PAARE ── */}
+      {sec===1&&(<>
+        {["t1","t2"].map(team=>{
+          const pairs=team==="t1"?stats.t1Pairs:stats.t2Pairs;
+          const color=team==="t1"?T.blue:T.red;
+          const maxPts=Math.max(...pairs.map(p=>p.pts),1);
+          return(<div key={team}>
+            <ST>{team==="t1"?`🔵 ${t1Name}`:`🔴 ${t2Name}`}</ST>
+            {pairs.length===0&&<Card><div style={{fontSize:12,color:T.faint,textAlign:"center"}}>Noch keine Daten</div></Card>}
+            {pairs.map((p,i)=>{
+              const captName=captainT1&&captNames[captainT1];const captName2=captainT2&&captNames[captainT2];
+              const isCapt=(team==="t1"&&captName&&p.name.includes(captName.split(" ")[0]))||(team==="t2"&&captName2&&p.name.includes(captName2.split(" ")[0]));
+              const pDist=scoreDist.find(d=>d.key===p.name)||{eagle:0,birdie:0,par:0,bogey:0,double:0};
+              return(
+                <Card key={i}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:10}}>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{display:"flex",alignItems:"center",gap:5,flexWrap:"wrap"}}>
+                        <div style={{fontSize:12,fontWeight:700,color:T.cream}}>{p.name}</div>
+                        {isCapt&&<span style={{fontSize:9,background:T.gold+"33",color:T.gold,borderRadius:4,padding:"1px 5px",fontWeight:700,flexShrink:0}}>🎖️ C</span>}
+                      </div>
+                      <div style={{fontSize:10,color:T.faint,marginTop:2}}>{p.holesWon} Löcher gewonnen · 🐦{pDist.birdie} 🦅{pDist.eagle}</div>
+                    </div>
+                    <div style={{textAlign:"right",flexShrink:0}}>
+                      <div style={{fontSize:30,fontWeight:900,color,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{fmt(p.pts)}</div>
+                      <div style={{fontSize:9,color:T.faint}}>Punkte</div>
+                    </div>
+                  </div>
+                  {/* Three mini bars */}
+                  <div style={{display:"flex",gap:8}}>
+                    {[
+                      {label:"Punkte",value:p.pts,max:Math.max(maxPts,1),color},
+                      {label:"Löcher",value:p.holesWon,max:18,color:"#4CAF50"},
+                      {label:"Birdies",value:pDist.birdie+(pDist.eagle||0),max:9,color:"#FFD700"},
+                    ].map((b,j)=>(
+                      <div key={j} style={{flex:1}}>
+                        <div style={{display:"flex",justifyContent:"space-between",fontSize:8,color:T.faint,marginBottom:3}}>
+                          <span>{b.label}</span><span style={{color:b.color,fontWeight:700}}>{fmt(b.value)}</span>
+                        </div>
+                        <div style={{height:7,background:T.elevated,borderRadius:4,overflow:"hidden"}}>
+                          <div style={{width:`${Math.min(100,(b.value/b.max)*100)}%`,height:"100%",background:b.color,borderRadius:4,boxShadow:`0 0 4px ${b.color}66`,transition:"width 0.6s"}}/>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {/* Mini score type row */}
+                  {pDist.eagle+pDist.birdie+pDist.par+pDist.bogey+pDist.double>0&&(
+                    <div style={{display:"flex",gap:6,marginTop:8}}>
+                      {[
+                        {label:"🦅",value:pDist.eagle,color:"#FFD700"},
+                        {label:"🐦",value:pDist.birdie,color:"#4CAF50"},
+                        {label:"⬜",value:pDist.par,color:T.muted},
+                        {label:"🔴",value:pDist.bogey,color:"#FF9800"},
+                        {label:"💀",value:pDist.double+(pDist.worse||0),color:"#E05252"},
+                      ].map((s,j)=>(
+                        <div key={j} style={{flex:1,background:T.elevated,borderRadius:4,padding:"3px 0",textAlign:"center"}}>
+                          <div style={{fontSize:10}}>{s.label}</div>
+                          <div style={{fontSize:10,fontWeight:700,color:s.color}}>{s.value}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+              );
+            })}
+          </div>);
+        })}
+      </>)}
+
+      {/* ── SCHLÄGE ── */}
+      {sec===2&&(<>
+        <ST>🎯 SCHLAG-VERTEILUNG</ST>
+        <Card>
+          <div style={{display:"flex",gap:16,alignItems:"center"}}>
+            <DonutChart size={110} thickness={20} T={T}
+              slices={distSlices.map(s=>({value:s.value,color:s.color}))}
+              label={`${distSlices.reduce((a,s)=>a+s.value,0)}`} sublabel="Schläge"/>
+            <div style={{flex:1}}>
+              {distSlices.map((s,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+                  <div style={{width:10,height:10,borderRadius:"50%",background:s.color,flexShrink:0}}/>
+                  <div style={{flex:1,fontSize:11,color:T.cream}}>{s.label}</div>
+                  <div style={{fontSize:13,fontWeight:700,color:s.color}}>{s.value}</div>
+                  <div style={{fontSize:9,color:T.faint}}>{distSlices.reduce((a,d)=>a+d.value,0)>0?Math.round((s.value/distSlices.reduce((a,d)=>a+d.value,0))*100)+"%":""}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </Card>
+
+        <ST>📊 SÄULEN-CHART</ST>
+        <Card>
+          <ColumnChart height={110} T={T}
+            data={distSlices.map(s=>({value:s.value,color:s.color,short:s.short}))}/>
+        </Card>
+
+        <div style={{display:"flex",gap:10}}>
+          {[
+            {emoji:"🦅",label:"Eagles",value:aggDist.eagle,color:"#FFD700"},
+            {emoji:"🐦",label:"Birdies",value:aggDist.birdie,color:"#4CAF50"},
+            {emoji:"🔴",label:"Bogeys",value:aggDist.bogey,color:"#FF9800"},
+          ].map((h,i)=>(
+            <Card key={i} style={{flex:1,textAlign:"center",padding:"12px 6px"}}>
+              <div style={{fontSize:26}}>{h.emoji}</div>
+              <div style={{fontSize:28,fontWeight:900,color:h.color,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{h.value}</div>
+              <div style={{fontSize:9,color:T.faint,marginTop:2}}>{h.label}</div>
+            </Card>
+          ))}
+        </div>
+      </>)}
+
+      {/* ── LÖCHER ── */}
+      {sec===3&&(<>
+        <ST>🗺️ LOCH-HEATMAP</ST>
+        <Card>
+          <HoleHeatmap holeWins={stats.holeWins} T={T}/>
+          <div style={{display:"flex",gap:12,marginTop:10,fontSize:10}}>
+            <span style={{color:T.blue}}>🔵 {t1Name}</span>
+            <span style={{color:T.muted}}>🤝 Tie</span>
+            <span style={{color:T.red}}>🔴 {t2Name}</span>
+          </div>
+        </Card>
+
+        <ST>📈 GEWONNENE LÖCHER PRO PAAR</ST>
+        <Card>
+          {[...stats.t1Pairs,...stats.t2Pairs].map((p,i)=>{
+            const color=p.team==="t1"?T.blue:T.red;
+            return(
+              <div key={i} style={{marginBottom:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:3}}>
+                  <span style={{color:T.cream}}>{p.name}</span>
+                  <span style={{fontWeight:700,color}}>{p.holesWon}/18</span>
+                </div>
+                <div style={{height:8,background:T.elevated,borderRadius:4,overflow:"hidden"}}>
+                  <div style={{width:`${(p.holesWon/18)*100}%`,height:"100%",background:color,borderRadius:4,boxShadow:`0 0 6px ${color}44`,transition:"width 0.6s"}}/>
                 </div>
               </div>
             );
-          })()}
-
-          <div style={{fontSize:"10px",color:T.gold,letterSpacing:"2px",fontWeight:"700",marginBottom:"10px",display:"flex",alignItems:"center",gap:"6px"}}><div style={{flex:1,height:"1px",background:T.border}}/>EINZELNE MATCHES<div style={{flex:1,height:"1px",background:T.border}}/></div>
-          <MatchTimelines/>
-        </>
-      )}
+          })}
+        </Card>
+      </>)}
     </div>
   );
 }
+
 
 // ── Course Tracker ────────────────────────────────────────────────────────────
 function CourseTracker({day, matches, matchRefs, T}){
