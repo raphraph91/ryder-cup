@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
-const VERSION = "2.01";
+const VERSION = "2.02";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLlzavBNImCRG0JacPZWdVIxezxKiqHcc",
@@ -1508,20 +1508,18 @@ function CourseTracker({day, matches, matchRefs, T}){
     return diff===0?{label:"AS",diff:0}:{label:`${Math.abs(diff)} UP`,diff};
   });
 
-  // holeMap: holeIndex → matchIndex (one per hole)
+  // holeMap: holeIndex → [matchIndex, ...] (multiple matches can share a hole)
   // A match is "on hole h" when completedHoles===h (next hole to play)
-  // Done for R1: completedHoles===9; Done for R2: completedHoles===18
   const holeMap = {};
-  // doneMI: { mi, label }  – shown in done row, persists into back 9
   const doneMI = [];
 
   matches.forEach((m,i) => {
     const c = completedHoles[i];
     if(c>=18){ doneMI.push({mi:i,label:"R1+R2"}); return; }
     if(c===9){ doneMI.push({mi:i,label:"R1"}); return; }
-    holeMap[c]=i;
+    if(!holeMap[c]) holeMap[c]=[];
+    holeMap[c].push(i);
   });
-  // Also collect R1-done matches that are now on back 9 (completedHoles 10..17)
   matches.forEach((m,i) => {
     const c = completedHoles[i];
     if(c>=10&&c<18){ doneMI.push({mi:i,label:"R1 ✓"}); }
@@ -1546,38 +1544,39 @@ function CourseTracker({day, matches, matchRefs, T}){
     const rowPar = course.par.slice(start, start+9);
     const HOLE_W = stripW/9;
 
-    let maxAbove=0, maxBelow=0;
+    // Compute max stacks needed above/below for height calculation
+    let maxStackAbove=0, maxStackBelow=0;
     rowPar.forEach((_,i)=>{
-      const hi=start+i; const mi=holeMap[hi];
-      if(mi===undefined)return;
-      if(mi%2===0)maxAbove=Math.max(maxAbove,1);
-      else maxBelow=Math.max(maxBelow,1);
+      const hi=start+i;
+      const mis=holeMap[hi]||[];
+      const above=mis.filter(mi=>mi%2===0).length;
+      const below=mis.filter(mi=>mi%2!==0).length;
+      maxStackAbove=Math.max(maxStackAbove,above);
+      maxStackBelow=Math.max(maxStackBelow,below);
     });
-    const topPad = maxAbove>0 ? CARD_H+STEM_H+4 : 8;
-    const botPad = maxBelow>0 ? CARD_H+STEM_H+4 : 8;
+    const topPad = maxStackAbove>0 ? (CARD_H+STEM_H+2)*maxStackAbove+4 : 8;
+    const botPad = maxStackBelow>0 ? (CARD_H+STEM_H+2)*maxStackBelow+4 : 8;
     const midY   = topPad+HOLE_R;
     const totalH = topPad+HOLE_R*2+botPad;
 
     return(
       <div style={{position:"relative",height:totalH,marginBottom:4}}>
-        {/* Row label */}
         <div style={{position:"absolute",top:0,left:0,fontSize:"7.5px",color:T.gold+"66",letterSpacing:"1px",fontWeight:"700",textTransform:"uppercase"}}>
           {rowIdx===0?"R1 · L 1–9":"R2 · L 10–18"}
         </div>
-        {/* Spine */}
         <div style={{position:"absolute",top:midY,left:4,right:4,height:2,background:`linear-gradient(90deg,${T.border},${T.muted}44,${T.border})`,borderRadius:1,transform:"translateY(-50%)"}}/>
         {rowPar.map((p,i)=>{
           const hi=start+i, hNum=hi+1;
-          const mi=holeMap[hi];
-          const hasC=mi!==undefined;
+          const mis=holeMap[hi]||[];
+          const hasAny=mis.length>0;
           const allP=allPastHole(hi);
           const cx=(i+0.5)*HOLE_W;
-          const bg2 = hasC?T.gold+"22":allP?T.elevated:T.isDark?"#0A1F10":T.bg;
-          const bdr = hasC?T.gold:allP?T.border:T.isDark?"#1A3A20":"#D0DDD0";
-          const tc2 = hasC?T.gold:allP?T.muted:T.isDark?"#1E4020":"#C8D8C8";
-          const above = hasC&&(mi%2===0);
-          const st = hasC?statuses[mi]:{diff:0,label:""};
-          let cardLeft = hasC?Math.max(2,Math.min(Math.round(cx-CARD_W/2), stripW-CARD_W-2)):0;
+          const bg2 = hasAny?T.gold+"22":allP?T.elevated:T.isDark?"#0A1F10":T.bg;
+          const bdr = hasAny?T.gold:allP?T.border:T.isDark?"#1A3A20":"#D0DDD0";
+          const tc2 = hasAny?T.gold:allP?T.muted:T.isDark?"#1E4020":"#C8D8C8";
+
+          // Count stacks per side for this hole
+          let aboveCount=0, belowCount=0;
 
           return(
             <div key={i}>
@@ -1585,24 +1584,31 @@ function CourseTracker({day, matches, matchRefs, T}){
               <div style={{position:"absolute",left:cx-HOLE_R,top:midY-HOLE_R,width:HOLE_R*2,height:HOLE_R*2,borderRadius:"50%",background:bg2,border:`2px solid ${bdr}`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:8,fontWeight:900,color:tc2,zIndex:2}}>{hNum}</div>
               {/* Par */}
               <div style={{position:"absolute",left:cx,top:midY+HOLE_R+3,transform:"translateX(-50%)",fontSize:"6.5px",color:T.isDark?"#1A3A20":"#C0D0C0",fontWeight:700}}>P{p}</div>
-              {/* Callout */}
-              {hasC&&(above?(
-                <>
-                  <div style={{position:"absolute",left:cx-0.75,top:midY-HOLE_R-STEM_H,width:1.5,height:STEM_H,background:T.gold+"33",zIndex:1}}/>
-                  <div onClick={()=>scrollToMatch(mi)} style={{position:"absolute",left:cardLeft,top:midY-HOLE_R-STEM_H-CARD_H,width:CARD_W,height:CARD_H,background:bgColor(st.diff,T),border:`1.5px solid ${bcColor(st.diff)}`,borderRadius:6,padding:"3px 6px",cursor:"pointer",zIndex:5,boxShadow:"0 2px 8px rgba(0,0,0,0.3)",display:"flex",alignItems:"center",justifyContent:"space-between",gap:4}}>
-                    <span style={{fontSize:10,fontWeight:900,color:T.gold,fontFamily:"'Arial Black',sans-serif"}}>M{mi+1}</span>
-                    <span style={{fontSize:11,fontWeight:900,color:stColor(st.diff),fontFamily:"'Arial Black',sans-serif",whiteSpace:"nowrap"}}>{st.label}</span>
-                  </div>
-                </>
-              ):(
-                <>
-                  <div style={{position:"absolute",left:cx-0.75,top:midY+HOLE_R,width:1.5,height:STEM_H,background:T.gold+"33",zIndex:1}}/>
-                  <div onClick={()=>scrollToMatch(mi)} style={{position:"absolute",left:cardLeft,top:midY+HOLE_R+STEM_H,width:CARD_W,height:CARD_H,background:bgColor(st.diff,T),border:`1.5px solid ${bcColor(st.diff)}`,borderRadius:6,padding:"3px 6px",cursor:"pointer",zIndex:5,boxShadow:"0 2px 8px rgba(0,0,0,0.3)",display:"flex",alignItems:"center",justifyContent:"space-between",gap:4}}>
-                    <span style={{fontSize:10,fontWeight:900,color:T.gold,fontFamily:"'Arial Black',sans-serif"}}>M{mi+1}</span>
-                    <span style={{fontSize:11,fontWeight:900,color:stColor(st.diff),fontFamily:"'Arial Black',sans-serif",whiteSpace:"nowrap"}}>{st.label}</span>
-                  </div>
-                </>
-              ))}
+              {/* Cards for each match on this hole */}
+              {mis.map(mi=>{
+                const above=mi%2===0;
+                const st=statuses[mi];
+                const stackIdx=above?aboveCount++:belowCount++;
+                const stackOffset=stackIdx*(CARD_H+3);
+                const cardLeft=Math.max(2,Math.min(Math.round(cx-CARD_W/2), stripW-CARD_W-2));
+                return above?(
+                  <React.Fragment key={mi}>
+                    <div style={{position:"absolute",left:cx-0.75,top:midY-HOLE_R-STEM_H,width:1.5,height:STEM_H+stackOffset,background:T.gold+"33",zIndex:1}}/>
+                    <div onClick={()=>scrollToMatch(mi)} style={{position:"absolute",left:cardLeft,top:midY-HOLE_R-STEM_H-CARD_H-stackOffset,width:CARD_W,height:CARD_H,background:bgColor(st.diff,T),border:`1.5px solid ${bcColor(st.diff)}`,borderRadius:6,padding:"3px 6px",cursor:"pointer",zIndex:5+stackIdx,boxShadow:"0 2px 8px rgba(0,0,0,0.3)",display:"flex",alignItems:"center",justifyContent:"space-between",gap:4}}>
+                      <span style={{fontSize:10,fontWeight:900,color:T.gold,fontFamily:"'Arial Black',sans-serif"}}>M{mi+1}</span>
+                      <span style={{fontSize:11,fontWeight:900,color:stColor(st.diff),fontFamily:"'Arial Black',sans-serif",whiteSpace:"nowrap"}}>{st.label}</span>
+                    </div>
+                  </React.Fragment>
+                ):(
+                  <React.Fragment key={mi}>
+                    <div style={{position:"absolute",left:cx-0.75,top:midY+HOLE_R,width:1.5,height:STEM_H+stackOffset,background:T.gold+"33",zIndex:1}}/>
+                    <div onClick={()=>scrollToMatch(mi)} style={{position:"absolute",left:cardLeft,top:midY+HOLE_R+STEM_H+stackOffset,width:CARD_W,height:CARD_H,background:bgColor(st.diff,T),border:`1.5px solid ${bcColor(st.diff)}`,borderRadius:6,padding:"3px 6px",cursor:"pointer",zIndex:5+stackIdx,boxShadow:"0 2px 8px rgba(0,0,0,0.3)",display:"flex",alignItems:"center",justifyContent:"space-between",gap:4}}>
+                      <span style={{fontSize:10,fontWeight:900,color:T.gold,fontFamily:"'Arial Black',sans-serif"}}>M{mi+1}</span>
+                      <span style={{fontSize:11,fontWeight:900,color:stColor(st.diff),fontFamily:"'Arial Black',sans-serif",whiteSpace:"nowrap"}}>{st.label}</span>
+                    </div>
+                  </React.Fragment>
+                );
+              })}
             </div>
           );
         })}
@@ -1690,10 +1696,13 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
     setSaving(true);
     const nd=days.map(day=>{if(day.id!==dayId)return day;return{...day,matches:day.matches.map(m=>{if(m.id!==matchId)return m;const ns=[...m.scores];ns[hi]={team1:t1s,team2:t2s};return{...m,scores:ns};})};});
     const change=detectPointChange(days,nd,t1Name,t2Name);if(change)await sendPushToAll(change.title,change.body,change.key);
-    await saveTournament({...config,days:nd});setSaving(false);setModal(null);
+    await saveTournament({...config,days:nd});setSaving(false);
+    // Auto-advance: after hole 9 (index 8) → open hole 10 (index 9)
+    if(hi===8){setModal({dayId,matchId,holeIndex:9});}
+    else{setModal(null);}
   };
 
-  const dayTabs=days.map((d,i)=>({key:`day${i}`,label:COURSES[d.courseKey]?.shortName||`Tag ${i+1}`}));
+  const dayTabs=days.map((d,i)=>({key:`day${i}`,label:`Spieltag ${i+1}`}));
   const tabs=[...dayTabs,{key:"stats",label:"Statistik",icon:<IconChart size={11} color="currentColor"/>}];
   const activeDayIdx=dayTabs.findIndex(t=>t.key===activeTab);
   const activeDay=activeDayIdx>=0?days[activeDayIdx]:null;
