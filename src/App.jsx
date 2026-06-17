@@ -1389,33 +1389,6 @@ function PairingEditor({config,dayIdx,onSave,onClose,T}){
     </div>
   );
 }
-                      const pid=(team==="t1"?matchAssign[mi].t1Players:matchAssign[mi].t2Players)[si];
-                      const player=allPlayers.find(p=>p.id===pid);
-                      const isActive=pickingSlot?.matchIdx===mi&&pickingSlot?.team===team&&pickingSlot?.slotIdx===si;
-                      const c=color(team);
-                      return(
-                        <button key={si} onClick={()=>{if(isActive)setPickingSlot(null);else{setPickingSlot({matchIdx:mi,team,slotIdx:si});window.scrollTo({top:0,behavior:"smooth"});}}}
-                          style={{width:"100%",padding:"8px",borderRadius:"8px",border:`2px solid ${isActive?c:player?c+"55":T.border}`,background:isActive?c+"22":player?c+"11":T.isDark?"#0A2014":T.elevated,cursor:"pointer",display:"flex",alignItems:"center",gap:"6px",minHeight:"44px",marginBottom:si<playersPerSlot-1?"5px":"0"}}>
-                          {player?(<>
-                            <PlayerAvatar name={(player.fn||"")+" "+(player.ln||"")} size={26} color={c} photo={player.photo}/>
-                            <div style={{flex:1,textAlign:"left"}}><div style={{fontSize:"11px",color:c,fontWeight:"700"}}>{player.fn} {player.ln}</div></div>
-                            <span onClick={e=>{e.stopPropagation();clearSlot(mi,team,si);}} style={{color:T.faint,fontSize:"16px",cursor:"pointer",padding:"2px"}}>×</span>
-                          </>):(
-                            <div style={{flex:1,textAlign:"center",fontSize:"11px",color:isActive?c:T.faint}}>{isActive?"↑ Wählen":"+ Spieler"}</div>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                ))}
-              </div>
-            </div>
-          ))}
-
-          <button disabled={!allFilled||saving} onClick={handleSave}
-            style={{width:"100%",padding:"13px",background:allFilled?`linear-gradient(135deg,${T.gold},#A07830)`:T.elevated,border:"none",borderRadius:"8px",color:allFilled?T.isDark?"#0D2B1A":"white":T.muted,fontSize:"14px",fontWeight:"900",letterSpacing:"2px",textTransform:"uppercase",cursor:allFilled?"pointer":"not-allowed",opacity:allFilled?1:0.5}}>
-            {saving?"Speichere...":"Paarings speichern ✓"}
-          </button>
 
 // ══════════════════════════════════════════════════════════════════════════════
 // DASHBOARD COMPONENTS
