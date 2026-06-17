@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
-const VERSION = "1.12";
+const VERSION = "9";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLlzavBNImCRG0JacPZWdVIxezxKiqHcc",
@@ -55,35 +55,13 @@ const GAME_MODES = {
 };
 
 function calcRoundStatus(scores,pars,s,e){
-  let diff=0,played=0,wonAtHole=-1,frozenLabel=null,frozenDiff=0;
-  for(let i=s;i<e;i++){
-    const h=scores[i];
-    if(typeof h.team1==="number"&&typeof h.team2==="number"){
-      played++;
-      if(h.team1<h.team2)diff++;else if(h.team2<h.team1)diff--;
-      // After updating diff, check if match is now decided
-      const remaining=e-s-played;
-      if(wonAtHole===-1&&Math.abs(diff)>remaining){
-        wonAtHole=i;
-        frozenDiff=diff;
-        // Freeze the label at this exact moment: e.g. "5&4", "3&2", "1UP" (last hole)
-        frozenLabel=remaining===0?"1UP":`${Math.abs(diff)}&${remaining}`;
-      }
-    }
-  }
-  const left=e-s-played;
-  let label="AS",won=false;
-  if(wonAtHole!==-1){
-    // Match decided mid-round — label frozen at decision point (e.g. "3&2", "2&1", "1UP")
-    label=frozenLabel; won=true;
-  } else if(left===0){
-    // All holes played, decide now
-    won=true;
-    label=diff>0?"1UP":diff<0?"1UP":"AS";
-  } else if(diff!==0){
-    label=`${Math.abs(diff)} UP`;
-  }
-  return{diff:wonAtHole!==-1?frozenDiff:diff,holesPlayed:played,holesLeft:left,label,won,wonAtHole};
+  let diff=0,played=0;
+  for(let i=s;i<e;i++){const h=scores[i];if(h.team1!==null&&h.team2!==null){played++;if(h.team1<h.team2)diff++;else if(h.team2<h.team1)diff--;}}
+  const left=e-s-played;let won=false,label="AS";
+  if(left===0){won=true;label=diff>0?"1UP":diff<0?"1UP":"AS";}
+  else if(Math.abs(diff)>left){won=true;label=`${Math.abs(diff)}&${left}`;}
+  else if(diff!==0){label=`${Math.abs(diff)} UP`;}
+  return{diff,holesPlayed:played,holesLeft:left,label,won};
 }
 function getPoints(rs){if(rs.won||rs.holesLeft===0){if(rs.diff>0)return{t1:1,t2:0};if(rs.diff<0)return{t1:0,t2:1};return{t1:0.5,t2:0.5};}return null;}
 function projectedPoints(rs){if(rs.won||rs.holesLeft===0)return getPoints(rs);const a=rs.diff/18;return{t1:0.5+a*0.4,t2:0.5-a*0.4};}
@@ -128,7 +106,7 @@ function calcStats(days,t1Name,t2Name){
       [0,1].forEach(r=>{
         const rs=calcRoundStatus(m.scores,course.par,r*9,r*9+9);const pts=getPoints(rs);
         if(pts){pairStats[key1].pts+=pts.t1;pairStats[key2].pts+=pts.t2;}
-        for(let i=r*9;i<r*9+9;i++){const sc=m.scores[i];if(typeof sc.team1==="number"&&typeof sc.team2==="number"){if(sc.team1<sc.team2){pairStats[key1].holesWon++;t1TotalHoles++;holeWins.t1[i]++;}else if(sc.team2<sc.team1){pairStats[key2].holesWon++;t2TotalHoles++;holeWins.t2[i]++;}else holeWins.tie[i]++;}}
+        for(let i=r*9;i<r*9+9;i++){const sc=m.scores[i];if(sc.team1!==null&&sc.team2!==null){if(sc.team1<sc.team2){pairStats[key1].holesWon++;t1TotalHoles++;holeWins.t1[i]++;}else if(sc.team2<sc.team1){pairStats[key2].holesWon++;t2TotalHoles++;holeWins.t2[i]++;}else holeWins.tie[i]++;}}
       });
     });
   });
@@ -951,12 +929,6 @@ function ScoreModal({match,holeIndex,t1Name,t2Name,existing,par,onSave,onClose,T
           <div>
             <div style={{fontSize:"15px",fontWeight:"900",color:T.gold,textTransform:"uppercase",letterSpacing:"1px"}}>Loch {holeIndex+1} · {match.name}</div>
             <div style={{fontSize:"11px",color:T.muted,marginTop:"2px"}}>{holeIndex<9?"Runde 1":"Runde 2"} · {mode?.icon} {mode?.label}</div>
-            {(()=>{
-              const roundStart=holeIndex<9?0:9,roundEnd=holeIndex<9?9:18;
-              const rs=calcRoundStatus(match.scores,match.scores.map(()=>4),roundStart,roundEnd);
-              const isDead=rs.won&&rs.wonAtHole>=0&&holeIndex>rs.wonAtHole;
-              return isDead?<div style={{fontSize:"10px",color:"#C9A84C",marginTop:"3px",background:"#C9A84C15",border:"1px solid #C9A84C44",borderRadius:"4px",padding:"2px 7px",display:"inline-block"}}>🎯 Entschieden · Nur Statistik</div>:null;
-            })()}
           </div>
           <div style={{textAlign:"center",background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"6px 12px"}}><div style={{fontSize:"9px",color:T.muted}}>PAR</div><div style={{fontSize:"22px",fontWeight:"900",color:T.gold,lineHeight:1}}>{hp}</div></div>
         </div>
@@ -978,43 +950,17 @@ function ScoreModal({match,holeIndex,t1Name,t2Name,existing,par,onSave,onClose,T
 }
 
 function NineHoleGrid({scores,pars,startHole,matchId,onHoleClick,canEdit,T}){
-  const end=startHole+9;
-  // Sequential: scan forward from startHole, stop at first gap
-  let lastConsec=startHole-1;
-  for(let i=startHole;i<end;i++){
-    if(typeof scores[i].team1==="number"&&typeof scores[i].team2==="number")lastConsec=i;
-    else break;
-  }
-  const nextEmpty=lastConsec+1; // first hole that can be newly entered
-  // Deadhole: where was this round decided?
-  const rs=calcRoundStatus(scores,pars,startHole,end);
-  const wonAt=(rs.won&&rs.wonAtHole>=0)?rs.wonAtHole:-1;
   return(
     <div style={{display:"grid",gridTemplateColumns:"repeat(9,1fr)",gap:"3px"}}>
-      {Array.from({length:9},(_,i)=>{
-        const hn=startHole+i;
-        const s=scores[hn];
-        const played=typeof s.team1==="number"&&typeof s.team2==="number";
-        const isDead=wonAt>=0&&hn>wonAt;
-        const isClickable=canEdit&&(played||hn===nextEmpty);
+      {scores.slice(startHole,startHole+9).map((s,i)=>{
+        const hn=startHole+i,p=pars[hn],played=s.team1!==null&&s.team2!==null;
         let bg=T.holeBg,color=T.holeText,border=`1px solid ${T.border}`;
-        if(played&&!isDead){
-          border="none";
-          if(s.team1<s.team2){bg=T.blue+"25";color=T.blue;}
-          else if(s.team2<s.team1){bg=T.red+"25";color=T.red;}
-          else{bg=T.border;color=T.muted;}
-        }
-        const opacity=(isDead&&played)?0.32:(!isClickable&&!played)?0.45:1;
+        if(played){border="none";if(s.team1<s.team2){bg=T.blue+"25";color=T.blue;}else if(s.team2<s.team1){bg=T.red+"25";color=T.red;}else{bg=T.border;color=T.muted;}}
         return(
-          <div key={i}
-            style={{borderRadius:"4px",cursor:isClickable?"pointer":"default",background:bg,color,
-                    border:isDead&&played?`1px dashed ${T.border}`:border,
-                    userSelect:"none",display:"flex",flexDirection:"column",alignItems:"center",
-                    justifyContent:"center",padding:"2px 0",minHeight:"32px",opacity,transition:"opacity 0.15s"}}
-            onClick={()=>{if(isClickable)onHoleClick(matchId,hn);}}>
+          <div key={i} style={{borderRadius:"4px",cursor:canEdit?"pointer":"default",background:bg,color,border,userSelect:"none",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"2px 0",minHeight:"32px",opacity:canEdit?1:played?0.9:0.6}} onClick={()=>canEdit&&onHoleClick(matchId,hn)}>
             <div style={{fontSize:"9px",fontWeight:"700",lineHeight:1}}>{hn+1}</div>
-            <div style={{fontSize:"7px",opacity:0.5,lineHeight:1}}>P{pars[hn]}</div>
-            {played&&<div style={{fontSize:"8px",fontWeight:"900",lineHeight:1,opacity:isDead?0.5:1}}>{s.team1}:{s.team2}</div>}
+            <div style={{fontSize:"7px",opacity:0.6,lineHeight:1}}>P{p}</div>
+            {played&&<div style={{fontSize:"8px",fontWeight:"900",lineHeight:1}}>{s.team1}:{s.team2}</div>}
           </div>
         );
       })}
@@ -1101,7 +1047,7 @@ function calcScoreDistribution(days) {
         const par = course.par[hi];
         const t1s = sc.team1; const t2s = sc.team2;
         [[t1s, pairs[0].key], [t2s, pairs[1].key]].forEach(([score, key]) => {
-          if (typeof score!=="number") return;
+          if (score === null || score === undefined) return;
           const diff = score - par;
           const d = pairDist[key];
           if (!d) return;
@@ -1142,7 +1088,7 @@ function calcMatchTimeline(match, pars) {
   // Returns array of 18 cumulative diff values (t1 perspective: + = t1 leading)
   let diff = 0;
   return match.scores.map((sc, hi) => {
-    if (typeof sc.team1==="number"&&typeof sc.team2==="number") {
+    if (sc.team1 !== null && sc.team2 !== null) {
       if (sc.team1 < sc.team2) diff++;
       else if (sc.team2 < sc.team1) diff--;
     }
@@ -1264,7 +1210,7 @@ function StatsTab({days,t1Name,t2Name,T}){
       const course = COURSES[day.courseKey]||Object.values(COURSES)[0];
       day.matches.forEach(m => {
         const timeline = calcMatchTimeline(m, course.par);
-        const hasData = m.scores.some(s=>typeof s.team1==="number");
+        const hasData = m.scores.some(s=>s.team1!==null);
         if (hasData) allMatches.push({match:m, timeline, day});
       });
     });
@@ -1272,7 +1218,7 @@ function StatsTab({days,t1Name,t2Name,T}){
     return(
       <div>
         {allMatches.map(({match,timeline,day},idx)=>{
-          const played = match.scores.filter(s=>typeof s.team1==="number").length;
+          const played = match.scores.filter(s=>s.team1!==null).length;
           const lastDiff = timeline[played-1]||0;
           const maxAbs = Math.max(...timeline.map(Math.abs),1);
           const W=280; const H=60; const pad=8;
@@ -1515,7 +1461,7 @@ function CourseTracker({day, matches, matchRefs, T}){
 
   // completedHoles per match = number of scores entered
   const completedHoles = matches.map(m =>
-    m.scores.filter(s => typeof s.team1==="number").length
+    m.scores.filter(s => s.team1 !== null).length
   );
 
   // Status per match
@@ -1602,18 +1548,7 @@ function CourseTracker({day, matches, matchRefs, T}){
           const tc2 = hasC?T.gold:allP?T.muted:T.isDark?"#1E4020":"#C8D8C8";
           const above = hasC&&(mi%2===0);
           const st = hasC?statuses[mi]:{diff:0,label:""};
-          let cardLeft = 0;
-          if(hasC){
-            const ideal = Math.round(cx - CARD_W/2);
-            const isAboveCard = mi % 2 === 0;
-            const rights = isAboveCard ? aboveRights : belowRights;
-            const lastRight = rights.length > 0 ? rights[rights.length-1] : -Infinity;
-            // Start at ideal, but push right if overlapping previous card
-            cardLeft = Math.max(ideal, lastRight + 3);
-            // Clamp to strip
-            cardLeft = Math.max(2, Math.min(cardLeft, stripW - CARD_W - 2));
-            rights.push(cardLeft + CARD_W);
-          }
+          let cardLeft = hasC?Math.max(2,Math.min(Math.round(cx-CARD_W/2), stripW-CARD_W-2)):0;
 
           return(
             <div key={i}>
@@ -1789,23 +1724,7 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
               const ref = matchCardRefs.current[mi] || (matchCardRefs.current[mi]=React.createRef());
               return(
                 <div key={m.id} ref={ref} style={{scrollMarginTop:"76px"}}>
-                  <MatchCard match={m} pars={course.par} t1Name={t1Name} t2Name={t2Name} canEdit={canEdit(m.id)} isAdmin={isAdmin} T={T} onHoleClick={(matchId,hi)=>{
-                    // Double-guard: NineHoleGrid already blocks visually,
-                    // this is the server-side safety net.
-                    const m2=activeDay.matches.find(mx=>mx.id===matchId);
-                    if(!m2)return;
-                    const alreadyPlayed=m2.scores[hi]&&typeof m2.scores[hi].team1==="number";
-                    if(!alreadyPlayed){
-                      const roundStart=hi<9?0:9;
-                      let lastConsec=roundStart-1;
-                      for(let k=roundStart;k<roundStart+9;k++){
-                        if(m2.scores[k]&&typeof m2.scores[k].team1==="number")lastConsec=k;
-                        else break;
-                      }
-                      if(hi!==lastConsec+1)return; // not the next hole in sequence
-                    }
-                    setModal({dayId:activeDay.id,matchId,holeIndex:hi});
-                  }} onReset={doReset}/>
+                  <MatchCard match={m} pars={course.par} t1Name={t1Name} t2Name={t2Name} canEdit={canEdit(m.id)} isAdmin={isAdmin} T={T} onHoleClick={(matchId,hi)=>setModal({dayId:activeDay.id,matchId,holeIndex:hi})} onReset={doReset}/>
                 </div>
               );
             })}
