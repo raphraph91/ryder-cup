@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
-const VERSION = "2.12";
+const VERSION = "2.13";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLlzavBNImCRG0JacPZWdVIxezxKiqHcc",
@@ -100,15 +100,17 @@ function emptyScores(){return Array.from({length:18},()=>({team1:null,team2:null
 // Fourball: best ball of each pair; Singles: direct 1v1
 function effectiveScores(hole,mode){
   if(!hole)return{t1:null,t2:null};
+  const v=x=>(x===undefined||x===null)?null:x;
   if(mode==="fourball"){
-    const t1=hole.p1a!==null&&hole.p1b!==null?Math.min(hole.p1a,hole.p1b):hole.p1a!==null?hole.p1a:hole.p1b!==null?hole.p1b:hole.team1;
-    const t2=hole.p2a!==null&&hole.p2b!==null?Math.min(hole.p2a,hole.p2b):hole.p2a!==null?hole.p2a:hole.p2b!==null?hole.p2b:hole.team2;
+    const a1=v(hole.p1a),b1=v(hole.p1b),a2=v(hole.p2a),b2=v(hole.p2b);
+    const t1=a1!==null&&b1!==null?Math.min(a1,b1):a1!==null?a1:b1!==null?b1:v(hole.team1);
+    const t2=a2!==null&&b2!==null?Math.min(a2,b2):a2!==null?a2:b2!==null?b2:v(hole.team2);
     return{t1,t2};
   }
   if(mode==="singles"){
-    return{t1:hole.p1a!==null?hole.p1a:hole.team1,t2:hole.p2a!==null?hole.p2a:hole.team2};
+    return{t1:v(hole.p1a)!==null?v(hole.p1a):v(hole.team1),t2:v(hole.p2a)!==null?v(hole.p2a):v(hole.team2)};
   }
-  return{t1:hole.team1,t2:hole.team2};
+  return{t1:v(hole.team1),t2:v(hole.team2)};
 }
 function detectPointChange(oldDays,newDays,t1Name,t2Name){
   if(!oldDays)return null;
@@ -210,8 +212,27 @@ function useChatPrefs(){
 }
 
 function useChatProfile(){
-  const [profile,setProfile]=useState(()=>{try{const s=localStorage.getItem(CHAT_PROFILE_KEY);return s?JSON.parse(s):null;}catch(e){return null;}});
-  const save=p=>{setProfile(p);try{localStorage.setItem(CHAT_PROFILE_KEY,JSON.stringify(p));}catch(e){}};
+  const [profile,setProfile]=useState(()=>{
+    try{
+      const s=localStorage.getItem(CHAT_PROFILE_KEY);
+      return s?JSON.parse(s):null;
+    }catch(e){return null;}
+  });
+  const save=p=>{
+    setProfile(p);
+    try{
+      const json=JSON.stringify(p);
+      // localStorage has ~5MB limit — if photo makes it too big, save without photo
+      if(json.length>3000000){
+        localStorage.setItem(CHAT_PROFILE_KEY,JSON.stringify({...p,photo:null}));
+      } else {
+        localStorage.setItem(CHAT_PROFILE_KEY,json);
+      }
+    }catch(e){
+      // Storage full — try saving without photo
+      try{localStorage.setItem(CHAT_PROFILE_KEY,JSON.stringify({...p,photo:null}));}catch(e2){}
+    }
+  };
   return[profile,save];
 }
 
@@ -239,20 +260,42 @@ function ChatProfileSetup({role,T,onDone}){
   const [photo,setPhoto]=useState(null);
   const [cropSrc,setCropSrc]=useState(null);
   const [cropScale,setCropScale]=useState(1);
+  const [baseScale,setBaseScale]=useState(1); // Fix 2b: natural fit scale
   const [cropX,setCropX]=useState(0);
   const [cropY,setCropY]=useState(0);
   const [dragging,setDragging]=useState(false);
   const [dragStart,setDragStart]=useState({x:0,y:0,ox:0,oy:0});
+  const imgRef=useRef(null);
+  const CROP_SIZE=200;
 
-  const handlePhoto=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{setCropSrc(ev.target.result);setCropScale(1);setCropX(0);setCropY(0);};r.readAsDataURL(f);};
+  const handlePhoto=e=>{
+    const f=e.target.files[0];if(!f)return;
+    const r=new FileReader();
+    r.onload=ev=>{
+      // Measure natural image dimensions to compute fit scale
+      const tmp=new Image();
+      tmp.onload=()=>{
+        // Scale so shorter side fills the 200px crop circle
+        const fit=CROP_SIZE/Math.min(tmp.naturalWidth,tmp.naturalHeight);
+        setBaseScale(fit);
+        setCropScale(1); // user zoom starts at 1x on top of fit
+        setCropX(0);setCropY(0);
+        setCropSrc(ev.target.result);
+      };
+      tmp.src=ev.target.result;
+    };
+    r.readAsDataURL(f);
+  };
 
   const startDrag=e=>{
+    e.preventDefault();
     const clientX=e.touches?e.touches[0].clientX:e.clientX;
     const clientY=e.touches?e.touches[0].clientY:e.clientY;
     setDragging(true);setDragStart({x:clientX,y:clientY,ox:cropX,oy:cropY});
   };
   const onDrag=e=>{
     if(!dragging)return;
+    e.preventDefault();
     const clientX=e.touches?e.touches[0].clientX:e.clientX;
     const clientY=e.touches?e.touches[0].clientY:e.clientY;
     setCropX(dragStart.ox+(clientX-dragStart.x));
@@ -261,15 +304,27 @@ function ChatProfileSetup({role,T,onDone}){
   const endDrag=()=>setDragging(false);
 
   const cropAndSave=()=>{
-    const size=200;const canvas=document.createElement("canvas");canvas.width=size;canvas.height=size;
+    const canvas=document.createElement("canvas");canvas.width=CROP_SIZE;canvas.height=CROP_SIZE;
     const ctx=canvas.getContext("2d");const img=new Image();
     img.onload=()=>{
-      const s=Math.min(img.width,img.height)*cropScale;
-      const sx=(img.width-s)/2-cropX*(img.width/200);
-      const sy=(img.height-s)/2-cropY*(img.height/200);
-      ctx.beginPath();ctx.arc(size/2,size/2,size/2,0,Math.PI*2);ctx.clip();
-      ctx.drawImage(img,sx,sy,s,s,0,0,size,size);
-      setPhoto(canvas.toDataURL("image/jpeg",0.8));setCropSrc(null);
+      const totalScale=baseScale*cropScale;
+      // Displayed image size in pixels on screen
+      const dispW=img.naturalWidth*totalScale;
+      const dispH=img.naturalHeight*totalScale;
+      // Center offset in display space
+      const cx=(CROP_SIZE-dispW)/2+cropX;
+      const cy=(CROP_SIZE-dispH)/2+cropY;
+      // Map from canvas coords to source coords
+      const sx=-cx/totalScale;
+      const sy=-cy/totalScale;
+      const sw=CROP_SIZE/totalScale;
+      const sh=CROP_SIZE/totalScale;
+      ctx.beginPath();ctx.arc(CROP_SIZE/2,CROP_SIZE/2,CROP_SIZE/2,0,Math.PI*2);ctx.clip();
+      ctx.drawImage(img,sx,sy,sw,sh,0,0,CROP_SIZE,CROP_SIZE);
+      // Fix 2a: save as jpeg with good quality, then persist
+      const dataUrl=canvas.toDataURL("image/jpeg",0.65);
+      setPhoto(dataUrl);
+      setCropSrc(null);
     };
     img.src=cropSrc;
   };
@@ -277,14 +332,30 @@ function ChatProfileSetup({role,T,onDone}){
   const inp={background:T.isDark?"#0A2014":T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",color:T.cream,fontSize:"14px",padding:"10px 12px",outline:"none",boxSizing:"border-box",width:"100%"};
 
   if(cropSrc){
+    const totalScale=baseScale*cropScale;
     return(
       <div style={{padding:"20px",display:"flex",flexDirection:"column",alignItems:"center",gap:"16px"}}>
         <div style={{fontSize:"14px",fontWeight:"700",color:T.gold}}>Foto zuschneiden</div>
+        <div style={{fontSize:"11px",color:T.muted}}>Verschieben zum Positionieren · Slider zum Zoomen</div>
         <div
-          style={{position:"relative",width:"200px",height:"200px",borderRadius:"50%",overflow:"hidden",border:`3px solid ${T.gold}`,cursor:"grab",userSelect:"none",touchAction:"none"}}
+          style={{position:"relative",width:`${CROP_SIZE}px`,height:`${CROP_SIZE}px`,borderRadius:"50%",overflow:"hidden",border:`3px solid ${T.gold}`,cursor:dragging?"grabbing":"grab",userSelect:"none",touchAction:"none",flexShrink:0}}
           onMouseDown={startDrag} onMouseMove={onDrag} onMouseUp={endDrag} onMouseLeave={endDrag}
           onTouchStart={startDrag} onTouchMove={onDrag} onTouchEnd={endDrag}>
-          <img src={cropSrc} style={{position:"absolute",top:"50%",left:"50%",transform:`translate(calc(-50% + ${cropX}px), calc(-50% + ${cropY}px)) scale(${cropScale})`,transformOrigin:"center",minWidth:"100%",minHeight:"100%",pointerEvents:"none"}} alt="crop"/>
+          <img
+            ref={imgRef}
+            src={cropSrc}
+            style={{
+              position:"absolute",
+              // Fix 2b: use calculated scale so image fits exactly, then apply user zoom
+              width:`${imgRef.current?imgRef.current.naturalWidth*totalScale:CROP_SIZE}px`,
+              height:"auto",
+              left:`${(CROP_SIZE-(imgRef.current?imgRef.current.naturalWidth*totalScale:CROP_SIZE))/2+cropX}px`,
+              top:`${(CROP_SIZE-(imgRef.current?imgRef.current.naturalHeight*totalScale:CROP_SIZE))/2+cropY}px`,
+              pointerEvents:"none",
+              maxWidth:"none",
+            }}
+            alt="crop"
+          />
         </div>
         <div style={{width:"100%",maxWidth:"280px"}}>
           <div style={{fontSize:"10px",color:T.muted,marginBottom:"4px"}}>Zoom</div>
@@ -1621,9 +1692,16 @@ function NineHoleGrid({scores,pars,startHole,matchId,onHoleClick,canEdit,T,round
             {played&&!showPerPlayer&&<div style={{fontSize:"8px",fontWeight:"900",lineHeight:1}}>{t1}:{t2}</div>}
             {played&&showPerPlayer&&(
               <div style={{fontSize:"7px",lineHeight:1.1,textAlign:"center"}}>
-                {isFourball&&s.p1a!==null&&<span style={{color:T.blue,fontWeight:"700"}}>{s.p1a}{s.p1b!==null?`·${s.p1b}`:""}</span>}
-                {isFourball&&<span style={{color:T.muted}}>/</span>}
-                {isFourball&&s.p2a!==null&&<span style={{color:T.red,fontWeight:"700"}}>{s.p2a}{s.p2b!==null?`·${s.p2b}`:""}</span>}
+                {isFourball&&(
+                  <>
+                    <div style={{color:T.blue,fontWeight:"700"}}>
+                      {s.p1a!=null?s.p1a:"—"}{s.p1b!=null?`·${s.p1b}`:""}
+                    </div>
+                    <div style={{color:T.red,fontWeight:"700"}}>
+                      {s.p2a!=null?s.p2a:"—"}{s.p2b!=null?`·${s.p2b}`:""}
+                    </div>
+                  </>
+                )}
                 {isSingles&&<span style={{fontWeight:"900"}}>{t1}:{t2}</span>}
               </div>
             )}
