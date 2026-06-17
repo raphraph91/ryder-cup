@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
-const VERSION = "2.10";
+const VERSION = "2.11";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLlzavBNImCRG0JacPZWdVIxezxKiqHcc",
@@ -32,6 +32,7 @@ async function registerFCMToken() {
 }
 async function sendPushToAll(title,body,dedupeKey) {
   if(dedupeKey&&dedupeKey===lastPushKey)return; lastPushKey=dedupeKey;
+  // Fix 3: single fetch only — service worker handles background, this handles foreground
   try{await fetch('/api/send-push',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title,body})});}catch(e){}
 }
 
@@ -81,13 +82,20 @@ function calcRoundStatus(scores,pars,s,e){
 function getPoints(rs){if(rs.won||rs.holesLeft===0){if(rs.diff>0)return{t1:1,t2:0};if(rs.diff<0)return{t1:0,t2:1};return{t1:0.5,t2:0.5};}return null;}
 function projectedPoints(rs){if(rs.won||rs.holesLeft===0)return getPoints(rs);const a=rs.diff/18;return{t1:0.5+a*0.4,t2:0.5-a*0.4};}
 
-function calcTournament(days){
+function calcTournament(days,numDays,matchesPerDay){
   let t1c=0,t2c=0,t1p=0,t2p=0,total=0;
+  // Count confirmed days
   days.forEach(day=>{
     const c=COURSES[day.courseKey]||Object.values(COURSES)[0];
     day.matches.forEach(m=>{total+=2;[0,1].forEach(r=>{const rs=calcRoundStatus(m.scores,c.par,r*9,r*9+9);const conf=getPoints(rs),proj=projectedPoints(rs);if(conf){t1c+=conf.t1;t2c+=conf.t2;}t1p+=proj.t1;t2p+=proj.t2;});});
   });
-  const s=t1p+t2p;return{t1Confirmed:t1c,t2Confirmed:t2c,t1Projected:Math.round(t1p*10)/10,t2Projected:Math.round(t2p*10)/10,t1WinProb:s>0?Math.round((t1p/s)*100):50,t2WinProb:s>0?Math.round((t2p/s)*100):50,totalPoints:total,needed:total/2+0.5};
+  // Fix 1: total possible points = numDays × matchesPerDay × 2 rounds
+  const nd=numDays||days.length;
+  const mpd=matchesPerDay||(days[0]?.matches?.length||4);
+  const totalPossible=nd*mpd*2;
+  const needed=totalPossible/2+0.5;
+  const s=t1p+t2p;
+  return{t1Confirmed:t1c,t2Confirmed:t2c,t1Projected:Math.round(t1p*10)/10,t2Projected:Math.round(t2p*10)/10,t1WinProb:s>0?Math.round((t1p/s)*100):50,t2WinProb:s>0?Math.round((t2p/s)*100):50,totalPoints:totalPossible,needed};
 }
 function emptyScores(){return Array.from({length:18},()=>({team1:null,team2:null}));}
 function detectPointChange(oldDays,newDays,t1Name,t2Name){
@@ -100,12 +108,39 @@ function detectPointChange(oldDays,newDays,t1Name,t2Name){
       for(let r=0;r<2;r++){
         const ors=calcRoundStatus(om.scores,c.par,r*9,r*9+9),nrs=calcRoundStatus(nm.scores,c.par,r*9,r*9+9);
         const op=getPoints(ors),np=getPoints(nrs);
-        if(!op&&np){const runde=r===0?"Runde 1":"Runde 2";const winner=np.t1>np.t2?t1Name:np.t2>np.t1?t2Name:null;const key=`${nm.id}-${r}-${np.t1}-${np.t2}`;
-          return{title:winner?`🏆 ${winner} gewinnt ${runde}!`:`🤝 ${runde} Unentschieden`,body:`${nm.name} · ${runde} · ${np.t1}:${np.t2} Punkte`,winner,key};}
+        if(!op&&np){
+          const runde=r===0?"Runde 1":"Runde 2";
+          const winner=np.t1>np.t2?t1Name:np.t2>np.t1?t2Name:null;
+          const winnerTeam=np.t1>np.t2?"t1":np.t2>np.t1?"t2":null;
+          const key=`${nm.id}-${r}-${np.t1}-${np.t2}`;
+          // Fix 4: include full player names of winning pair
+          const winPair=winnerTeam==="t1"?(nm.t1Pair||[]):(nm.t2Pair||[]);
+          const winNames=winPair.join(" & ");
+          const score=nrs.label;
+          const title=winner
+            ?`🏆 ${winNames} gewinnen ${runde}!`
+            :`🤝 ${runde} endet Unentschieden`;
+          const body=winner
+            ?`${nm.name} · ${winner} siegt · ${score}`
+            :`${nm.name} · Geteilter Punkt`;
+          return{title,body,winner,winnerTeam,key};
+        }
       }
     }
   }
   return null;
+}
+
+// Fix 5: stylish tournament win message
+function buildTournamentWinMessage(winner,t1Pts,t2Pts,t1Name,t2Name){
+  const loser=winner===t1Name?t2Name:t1Name;
+  const wPts=winner===t1Name?t1Pts:t2Pts;
+  const lPts=winner===t1Name?t2Pts:t1Pts;
+  const margin=wPts-lPts;
+  return{
+    title:`${winner} gewinnt den Ryder Cup`,
+    body:`Endstand: ${wPts} – ${lPts} · ${winner} triumphiert mit ${margin > 1 ? "einem klaren Vorsprung" : "einem knappen Vorsprung"} über ${loser}.`,
+  };
 }
 function calcStats(days,t1Name,t2Name){
   const pairStats={};let t1TotalHoles=0,t2TotalHoles=0;
@@ -519,31 +554,20 @@ function PlayerAvatar({name,size=36,color,photo}){
   );
 }
 
-// ── Confetti ──────────────────────────────────────────────────────────────────
-function Confetti({active,onDone}){
-  const canvasRef=useRef(null);
-  useEffect(()=>{
-    if(!active)return;
-    const canvas=canvasRef.current;if(!canvas)return;
-    const ctx=canvas.getContext("2d");canvas.width=window.innerWidth;canvas.height=window.innerHeight;
-    const pieces=Array.from({length:120},()=>({x:Math.random()*canvas.width,y:-20,w:8+Math.random()*8,h:8+Math.random()*8,r:Math.random()*Math.PI*2,dr:(Math.random()-0.5)*0.2,dx:(Math.random()-0.5)*4,dy:3+Math.random()*4,color:["#C9A84C","#4A9EFF","#FF6B6B","#8BAF7C","#F2EDD7","#FFD700"][Math.floor(Math.random()*6)],opacity:1}));
-    let frame,start=null;
-    const draw=ts=>{if(!start)start=ts;const elapsed=ts-start;ctx.clearRect(0,0,canvas.width,canvas.height);pieces.forEach(p=>{p.x+=p.dx;p.y+=p.dy;p.r+=p.dr;if(elapsed>2000)p.opacity=Math.max(0,p.opacity-0.02);ctx.save();ctx.globalAlpha=p.opacity;ctx.translate(p.x,p.y);ctx.rotate(p.r);ctx.fillStyle=p.color;ctx.fillRect(-p.w/2,-p.h/2,p.w,p.h);ctx.restore();});if(elapsed<3500)frame=requestAnimationFrame(draw);else{ctx.clearRect(0,0,canvas.width,canvas.height);onDone();}};
-    frame=requestAnimationFrame(draw);return()=>cancelAnimationFrame(frame);
-  },[active]);
-  if(!active)return null;
-  return<canvas ref={canvasRef} style={{position:"fixed",inset:0,pointerEvents:"none",zIndex:500}}/>;
-}
+// Confetti removed (v2.11)
 
 function WinBanner({event,onDone}){
-  useEffect(()=>{if(!event)return;const t=setTimeout(onDone,4000);return()=>clearTimeout(t);},[event]);
+  useEffect(()=>{if(!event)return;const t=setTimeout(onDone,5000);return()=>clearTimeout(t);},[event]);
   if(!event)return null;
+  const isT1=event.winnerTeam==="t1";
+  const color=isT1?"#4A9EFF":event.winnerTeam==="t2"?"#FF6B6B":"#C9A84C";
   return(
-    <div style={{position:"fixed",top:"80px",left:"50%",transform:"translateX(-50%)",zIndex:501,textAlign:"center",pointerEvents:"none",width:"90%",maxWidth:"360px"}}>
-      <div style={{background:event.winner?"linear-gradient(135deg,#C9A84C,#A07830)":"linear-gradient(135deg,#2D6B40,#1A4D2E)",borderRadius:"16px",padding:"18px 24px",boxShadow:"0 8px 32px rgba(0,0,0,0.5)",border:"2px solid rgba(255,255,255,0.2)"}}>
-        <div style={{fontSize:"36px",marginBottom:"6px"}}>{event.winner?"🏆":"🤝"}</div>
-        <div style={{fontSize:"18px",fontWeight:"900",color:event.winner?"#0D2B1A":"#F2EDD7",fontFamily:"'Arial Black',sans-serif"}}>{event.title}</div>
-        <div style={{fontSize:"12px",color:event.winner?"rgba(0,0,0,0.6)":"#8BAF7C",marginTop:"4px"}}>{event.body}</div>
+    <div style={{position:"fixed",top:"80px",left:"50%",transform:"translateX(-50%)",zIndex:501,textAlign:"center",pointerEvents:"none",width:"90%",maxWidth:"380px"}}>
+      <div style={{background:`linear-gradient(135deg,#0A2014,#1A4D2E)`,borderRadius:"16px",padding:"20px 24px",boxShadow:`0 8px 40px rgba(0,0,0,0.7)`,border:`2px solid ${color}`}}>
+        <div style={{fontSize:"11px",color,letterSpacing:"3px",fontWeight:"700",marginBottom:"8px",textTransform:"uppercase"}}>Match entschieden</div>
+        <div style={{fontSize:"18px",fontWeight:"900",color:"#F2EDD7",fontFamily:"'Arial Black',sans-serif",lineHeight:1.2}}>{event.title}</div>
+        <div style={{fontSize:"11px",color:"#8BAF7C",marginTop:"8px",lineHeight:1.4}}>{event.body}</div>
+        <div style={{marginTop:"12px",height:"1px",background:`linear-gradient(90deg,transparent,${color},transparent)`}}/>
       </div>
     </div>
   );
@@ -1154,15 +1178,28 @@ function PairingEditor({config,dayIdx,onSave,onClose,T}){
   const matchFormat=config.matchFormat||"1v1";
   const playersPerSlot=matchFormat==="2v2"?2:1;
 
-  // Build initial assignment from current day matches
-  const [matchAssign,setMatchAssign]=useState(()=>
-    day.matches.map(m=>({
-      t1Players:[...(m.t1PlayerIds||[])],
-      t2Players:[...(m.t2PlayerIds||[])],
-    }))
-  );
+  // Fix 2: if day has no matches yet, show setup first
+  const [courseKey,setCourseKey]=useState(day.courseKey||Object.keys(COURSES)[0]);
+  const [mode,setMode]=useState(day.mode||day.matches?.[0]?.mode||"scramble");
+  const [numMatches,setNumMatches]=useState(day.matches?.length||4);
+  const [setupDone,setSetupDone]=useState(day.matches?.length>0&&day.matches.some(m=>m.t1PlayerIds?.length>0));
+
+  // Build initial assignment
+  const makeEmptyAssign=(n)=>Array.from({length:n},()=>({t1Players:Array(playersPerSlot).fill(undefined),t2Players:Array(playersPerSlot).fill(undefined)}));
+  const [matchAssign,setMatchAssign]=useState(()=>{
+    if(!day.matches?.length)return makeEmptyAssign(numMatches);
+    return day.matches.map(m=>({
+      t1Players:[...(m.t1PlayerIds||[])].slice(0,playersPerSlot),
+      t2Players:[...(m.t2PlayerIds||[])].slice(0,playersPerSlot),
+    }));
+  });
   const [pickingSlot,setPickingSlot]=useState(null);
   const [saving,setSaving]=useState(false);
+
+  const handleSetupConfirm=()=>{
+    setMatchAssign(makeEmptyAssign(numMatches));
+    setSetupDone(true);
+  };
 
   const usedIds=()=>{const s=new Set();matchAssign.forEach(ma=>{ma.t1Players.forEach(id=>{if(id)s.add(id);});ma.t2Players.forEach(id=>{if(id)s.add(id);});});return s;};
 
@@ -1171,7 +1208,6 @@ function PairingEditor({config,dayIdx,onSave,onClose,T}){
     const{matchIdx,team,slotIdx}=pickingSlot;
     setMatchAssign(prev=>{
       const next=prev.map(ma=>({t1Players:[...ma.t1Players],t2Players:[...ma.t2Players]}));
-      // remove from other matches
       next.forEach((ma,mi)=>{if(mi!==matchIdx){ma.t1Players=ma.t1Players.map(id=>id===playerId?undefined:id);ma.t2Players=ma.t2Players.map(id=>id===playerId?undefined:id);}});
       const arr=team==="t1"?next[matchIdx].t1Players:next[matchIdx].t2Players;
       arr[slotIdx]=playerId;
@@ -1191,20 +1227,26 @@ function PairingEditor({config,dayIdx,onSave,onClose,T}){
   const handleSave=async()=>{
     setSaving(true);
     const playerMap={};allPlayers.forEach(p=>{playerMap[p.id]=p;});
-    const newMatches=day.matches.map((m,mi)=>{
-      const ma=matchAssign[mi];
+    const newMatches=matchAssign.map((ma,mi)=>{
+      const existingMatch=day.matches?.[mi];
       const p1a=playerMap[ma.t1Players[0]];const p1b=playerMap[ma.t1Players[1]];
       const p2a=playerMap[ma.t2Players[0]];const p2b=playerMap[ma.t2Players[1]];
       const t1Pair=[p1a?`${p1a.fn} ${p1a.ln}`:"?",p1b?`${p1b.fn} ${p1b.ln}`:null].filter(Boolean);
       const t2Pair=[p2a?`${p2a.fn} ${p2a.ln}`:"?",p2b?`${p2b.fn} ${p2b.ln}`:null].filter(Boolean);
       const t1Photos={};ma.t1Players.forEach(id=>{if(id)t1Photos[id]=playerMap[id]?.photo||null;});
       const t2Photos={};ma.t2Players.forEach(id=>{if(id)t2Photos[id]=playerMap[id]?.photo||null;});
-      return{...m,t1Pair,t2Pair,t1PlayerIds:ma.t1Players.filter(Boolean),t2PlayerIds:ma.t2Players.filter(Boolean),t1Photos,t2Photos,
+      return{
+        id:existingMatch?.id||(dayIdx*100)+(mi+1),
+        name:`Match ${mi+1}`,pin:`MATCH${(dayIdx*(config.matchesPerDay||numMatches))+(mi+1)}`,
+        mode,matchFormat:config.matchFormat||"2v2",
+        t1Pair,t2Pair,t1PlayerIds:ma.t1Players.filter(Boolean),t2PlayerIds:ma.t2Players.filter(Boolean),
+        t1Photos,t2Photos,
         teamHcp1:p1a?parseFloat(p1a.hcp||0):null,teamHcp2:p2a?parseFloat(p2a.hcp||0):null,
-        scores:emptyScores()}; // reset scores for this day
+        scores:existingMatch?.scores||emptyScores(),
+      };
     });
-    const newDays=config.days.map((d,di)=>di===dayIdx?{...d,matches:newMatches}:d);
-    await saveTournament({...config,days:newDays});
+    const newDays=config.days.map((d,di)=>di===dayIdx?{...d,courseKey,mode,matches:newMatches,pairingsDone:true,status:d.status==="setup"?"pending":d.status}:d);
+    await saveTournament({...config,days:newDays,matchesPerDay:numMatches});
     setSaving(false);onSave({...config,days:newDays});
   };
 
@@ -1219,55 +1261,134 @@ function PairingEditor({config,dayIdx,onSave,onClose,T}){
           <button onClick={onClose} style={{background:"transparent",border:`1px solid rgba(255,255,255,0.2)`,borderRadius:"6px",color:"rgba(255,255,255,0.7)",fontSize:"11px",padding:"5px 8px",cursor:"pointer",display:"flex",alignItems:"center",gap:"3px"}}>
             <IconBack size={11} color="rgba(255,255,255,0.7)"/>Abbrechen
           </button>
-          <div style={{fontSize:"14px",fontWeight:"900",color:T.gold,fontFamily:"'Arial Black',sans-serif"}}>⛳ Paarings ändern</div>
+          <div style={{fontSize:"14px",fontWeight:"900",color:T.gold,fontFamily:"'Arial Black',sans-serif"}}>⛳ Paarings Tag {dayIdx+1}</div>
           <div style={{width:"70px"}}/>
         </div>
         <div style={{padding:"14px",flex:1}}>
-          <div style={{background:"#E0820022",border:"1px solid #E08200",borderRadius:"8px",padding:"10px 14px",marginBottom:"14px",fontSize:"11px",color:"#E08200"}}>
-            ⚠️ Scores von Tag {dayIdx+1} werden zurückgesetzt wenn du speicherst.
-          </div>
-          {pickingSlot?(
-            <div style={{background:T.gold+"22",border:`1px solid ${T.gold}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"12px",display:"flex",alignItems:"center",gap:"10px"}}>
-              <div>{pickingSlot.team==="t1"?"🔵":"🔴"}</div>
-              <div style={{flex:1}}><div style={{fontSize:"12px",fontWeight:"700",color:T.gold}}>Match {pickingSlot.matchIdx+1} · Slot {pickingSlot.slotIdx+1} · {teamName(pickingSlot.team)}</div><div style={{fontSize:"10px",color:T.muted}}>Spieler unten antippen</div></div>
-              <button onClick={()=>setPickingSlot(null)} style={{background:"transparent",border:"none",color:T.muted,fontSize:"22px",cursor:"pointer"}}>×</button>
+
+          {/* Fix 2: Setup section for course/mode/matches */}
+          {!setupDone?(
+            <div>
+              <div style={{background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"10px",padding:"16px 14px",marginBottom:"14px"}}>
+                <div style={{fontSize:"13px",fontWeight:"700",color:T.gold,marginBottom:"14px"}}>⚙️ Spieltag {dayIdx+1} konfigurieren</div>
+                <div style={{marginBottom:"12px"}}>
+                  <div style={{fontSize:"10px",color:T.muted,letterSpacing:"1px",marginBottom:"6px"}}>PLATZ</div>
+                  {Object.values(COURSES).map(c=>(
+                    <button key={c.id} onClick={()=>setCourseKey(c.id)} style={{width:"100%",padding:"10px 12px",marginBottom:"6px",borderRadius:"8px",border:`1px solid ${courseKey===c.id?T.gold:T.border}`,background:courseKey===c.id?T.gold+"22":"transparent",color:courseKey===c.id?T.gold:T.cream,cursor:"pointer",textAlign:"left",fontSize:"13px"}}>
+                      {c.name} <span style={{fontSize:"10px",color:T.faint}}>· {c.location}</span>
+                    </button>
+                  ))}
+                </div>
+                <div style={{marginBottom:"12px"}}>
+                  <div style={{fontSize:"10px",color:T.muted,letterSpacing:"1px",marginBottom:"6px"}}>SPIELMODUS</div>
+                  <div style={{display:"flex",gap:"6px",flexWrap:"wrap"}}>
+                    {Object.entries(GAME_MODES).map(([k,v])=>(
+                      <button key={k} onClick={()=>setMode(k)} style={{padding:"7px 12px",borderRadius:"8px",border:`1px solid ${mode===k?T.gold:T.border}`,background:mode===k?T.gold+"22":"transparent",color:mode===k?T.gold:T.muted,cursor:"pointer",fontSize:"11px"}}>
+                        {v.icon} {v.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div style={{marginBottom:"16px"}}>
+                  <div style={{fontSize:"10px",color:T.muted,letterSpacing:"1px",marginBottom:"6px"}}>ANZAHL MATCHES</div>
+                  <div style={{display:"flex",gap:"6px"}}>
+                    {[2,3,4,5,6].map(n=>(
+                      <button key={n} onClick={()=>setNumMatches(n)} style={{width:"44px",height:"44px",borderRadius:"8px",border:`1px solid ${numMatches===n?T.gold:T.border}`,background:numMatches===n?T.gold+"22":"transparent",color:numMatches===n?T.gold:T.muted,cursor:"pointer",fontSize:"16px",fontWeight:"700"}}>
+                        {n}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <button onClick={handleSetupConfirm} style={{width:"100%",padding:"13px",background:`linear-gradient(135deg,${T.gold},#A07830)`,border:"none",borderRadius:"8px",color:T.isDark?"#0D2B1A":"white",fontSize:"14px",fontWeight:"900",cursor:"pointer"}}>
+                  Weiter → Paarungen setzen
+                </button>
+              </div>
             </div>
           ):(
-            <div style={{background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"12px",fontSize:"11px",color:T.muted}}>
-              💡 Tippe einen Spieler-Slot um ihn zu ändern
-            </div>
-          )}
-
-          {pickingSlot&&(()=>{
-            const used=usedIds();
-            const curArr=pickingSlot.team==="t1"?matchAssign[pickingSlot.matchIdx].t1Players:matchAssign[pickingSlot.matchIdx].t2Players;
-            const curId=curArr[pickingSlot.slotIdx];
-            const c=color(pickingSlot.team);
-            return(
-              <div style={{background:T.cardBg,border:`1px solid ${c}55`,borderRadius:"10px",padding:"10px",marginBottom:"14px"}}>
-                {teamPlayers(pickingSlot.team).map(p=>{
-                  const isUsed=used.has(p.id)&&p.id!==curId;const isCur=p.id===curId;
-                  return(
-                    <button key={p.id} disabled={isUsed} onClick={()=>assignPlayer(p.id)}
-                      style={{width:"100%",padding:"9px 12px",marginBottom:"5px",borderRadius:"8px",border:`1px solid ${isCur?c:T.border}`,background:isCur?c+"22":"transparent",cursor:isUsed?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:"10px",opacity:isUsed?0.4:1}}>
-                      <PlayerAvatar name={(p.fn||"")+" "+(p.ln||"")} size={30} color={isCur?c:T.muted} photo={p.photo}/>
-                      <div style={{flex:1,textAlign:"left"}}><div style={{fontSize:"13px",color:isCur?c:T.cream,fontWeight:isCur?"700":"400"}}>{p.fn} {p.ln}</div><div style={{fontSize:"10px",color:T.faint}}>{isUsed?"Bereits eingeteilt":p.hcp?`HCP ${p.hcp}`:"—"}</div></div>
-                      {isCur&&<IconCheck size={15} color={c}/>}
-                    </button>
-                  );
-                })}
+            <>
+              {/* Summary bar */}
+              <div style={{background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"8px 12px",marginBottom:"12px",display:"flex",gap:"12px",fontSize:"11px",color:T.muted}}>
+                <span>📍 {COURSES[courseKey]?.shortName}</span>
+                <span>{GAME_MODES[mode]?.icon} {GAME_MODES[mode]?.label}</span>
+                <span>🏌️ {numMatches} Matches</span>
+                <button onClick={()=>setSetupDone(false)} style={{background:"transparent",border:"none",color:T.gold,cursor:"pointer",fontSize:"10px",marginLeft:"auto"}}>✏️ Ändern</button>
               </div>
-            );
-          })()}
 
-          {day.matches.map((m,mi)=>(
-            <div key={mi} style={{background:T.cardBg,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"12px 14px",marginBottom:"10px"}}>
-              <div style={{fontSize:"13px",fontWeight:"900",color:T.gold,marginBottom:"10px"}}>Match {mi+1}</div>
-              <div style={{display:"flex",gap:"8px"}}>
-                {(["t1","t2"]).map(team=>(
-                  <div key={team} style={{flex:1}}>
-                    <div style={{fontSize:"9px",color:color(team),letterSpacing:"1px",marginBottom:"5px",fontWeight:"700"}}>{teamName(team)}</div>
-                    {Array.from({length:playersPerSlot},(_,si)=>{
+              <div style={{background:"#E0820022",border:"1px solid #E08200",borderRadius:"8px",padding:"10px 14px",marginBottom:"14px",fontSize:"11px",color:"#E08200"}}>
+                ⚠️ Scores von Tag {dayIdx+1} werden zurückgesetzt wenn du speicherst.
+              </div>
+              {pickingSlot?(
+                <div style={{background:T.gold+"22",border:`1px solid ${T.gold}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"12px",display:"flex",alignItems:"center",gap:"10px"}}>
+                  <div>{pickingSlot.team==="t1"?"🔵":"🔴"}</div>
+                  <div style={{flex:1}}><div style={{fontSize:"12px",fontWeight:"700",color:T.gold}}>Match {pickingSlot.matchIdx+1} · {teamName(pickingSlot.team)}</div><div style={{fontSize:"10px",color:T.muted}}>Spieler antippen</div></div>
+                  <button onClick={()=>setPickingSlot(null)} style={{background:"transparent",border:"none",color:T.muted,fontSize:"22px",cursor:"pointer"}}>×</button>
+                </div>
+              ):(
+                <div style={{background:T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",padding:"10px 14px",marginBottom:"12px",fontSize:"11px",color:T.muted}}>
+                  💡 Tippe einen Spieler-Slot um ihn zu ändern
+                </div>
+              )}
+
+              {pickingSlot&&(()=>{
+                const used=usedIds();
+                const curArr=pickingSlot.team==="t1"?matchAssign[pickingSlot.matchIdx].t1Players:matchAssign[pickingSlot.matchIdx].t2Players;
+                const curId=curArr[pickingSlot.slotIdx];
+                const c=color(pickingSlot.team);
+                return(
+                  <div style={{background:T.cardBg,border:`1px solid ${c}55`,borderRadius:"10px",padding:"10px",marginBottom:"14px"}}>
+                    {teamPlayers(pickingSlot.team).map(p=>{
+                      const isUsed=used.has(p.id)&&p.id!==curId;const isCur=p.id===curId;
+                      return(
+                        <button key={p.id} disabled={isUsed} onClick={()=>assignPlayer(p.id)}
+                          style={{width:"100%",padding:"9px 12px",marginBottom:"5px",borderRadius:"8px",border:`1px solid ${isCur?c:T.border}`,background:isCur?c+"22":"transparent",cursor:isUsed?"not-allowed":"pointer",display:"flex",alignItems:"center",gap:"10px",opacity:isUsed?0.4:1}}>
+                          <PlayerAvatar name={(p.fn||"")+" "+(p.ln||"")} size={30} color={isCur?c:T.muted} photo={p.photo}/>
+                          <div style={{flex:1,textAlign:"left"}}><div style={{fontSize:"13px",color:isCur?c:T.cream,fontWeight:isCur?"700":"400"}}>{p.fn} {p.ln}</div><div style={{fontSize:"10px",color:T.faint}}>{isUsed?"Bereits eingeteilt":p.hcp?`HCP ${p.hcp}`:"—"}</div></div>
+                          {isCur&&<IconCheck size={15} color={c}/>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+
+              {matchAssign.map((ma,mi)=>(
+                <div key={mi} style={{background:T.cardBg,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"12px 14px",marginBottom:"10px"}}>
+                  <div style={{fontSize:"13px",fontWeight:"900",color:T.gold,marginBottom:"10px"}}>Match {mi+1}</div>
+                  <div style={{display:"flex",gap:"8px"}}>
+                    {(["t1","t2"]).map(team=>(
+                      <div key={team} style={{flex:1}}>
+                        <div style={{fontSize:"9px",color:color(team),letterSpacing:"1px",marginBottom:"5px",fontWeight:"700"}}>{teamName(team)}</div>
+                        {Array.from({length:playersPerSlot},(_,si)=>{
+                          const pid=(team==="t1"?ma.t1Players:ma.t2Players)[si];
+                          const player=pid?allPlayers.find(p=>p.id===pid):null;
+                          return(
+                            <div key={si} style={{display:"flex",gap:"6px",alignItems:"center",marginBottom:"5px"}}>
+                              <div onClick={()=>setPickingSlot({matchIdx:mi,team,slotIdx:si})}
+                                style={{flex:1,borderRadius:"8px",border:`1px solid ${pickingSlot?.matchIdx===mi&&pickingSlot?.team===team&&pickingSlot?.slotIdx===si?T.gold:pid?color(team)+"55":T.border}`,background:pid?color(team)+"11":T.elevated,padding:"7px 10px",cursor:"pointer",display:"flex",alignItems:"center",gap:"8px"}}>
+                                {player?<><PlayerAvatar name={`${player.fn} ${player.ln}`} size={24} color={color(team)} photo={player.photo}/><div style={{flex:1,fontSize:"11px",color:T.cream,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{player.fn} {player.ln}</div></>
+                                :<div style={{flex:1,fontSize:"11px",color:T.faint}}>Spieler wählen…</div>}
+                              </div>
+                              {pid&&<button onClick={()=>clearSlot(mi,team,si)} style={{background:"transparent",border:"none",color:T.faint,fontSize:"16px",cursor:"pointer",padding:"0 2px"}}>×</button>}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+
+              <button disabled={!allFilled||saving} onClick={handleSave}
+                style={{width:"100%",padding:"13px",background:allFilled?`linear-gradient(135deg,${T.gold},#A07830)`:T.elevated,border:"none",borderRadius:"8px",color:allFilled?T.isDark?"#0D2B1A":"white":T.muted,fontSize:"14px",fontWeight:"900",cursor:allFilled?"pointer":"not-allowed",marginTop:"8px"}}>
+                {saving?"Speichere...":"Paarungen speichern ✓"}
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
                       const pid=(team==="t1"?matchAssign[mi].t1Players:matchAssign[mi].t2Players)[si];
                       const player=allPlayers.find(p=>p.id===pid);
                       const isActive=pickingSlot?.matchIdx===mi&&pickingSlot?.team===team&&pickingSlot?.slotIdx===si;
@@ -1295,12 +1416,6 @@ function PairingEditor({config,dayIdx,onSave,onClose,T}){
             style={{width:"100%",padding:"13px",background:allFilled?`linear-gradient(135deg,${T.gold},#A07830)`:T.elevated,border:"none",borderRadius:"8px",color:allFilled?T.isDark?"#0D2B1A":"white":T.muted,fontSize:"14px",fontWeight:"900",letterSpacing:"2px",textTransform:"uppercase",cursor:allFilled?"pointer":"not-allowed",opacity:allFilled?1:0.5}}>
             {saving?"Speichere...":"Paarings speichern ✓"}
           </button>
-          {!allFilled&&<div style={{fontSize:"11px",color:T.faint,textAlign:"center",marginTop:"8px"}}>Alle Slots müssen befüllt sein</div>}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // DASHBOARD COMPONENTS
@@ -2130,7 +2245,7 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
   const [toast,setToast]=useState(null);
   const [resetAll,setResetAll]=useState(false);
   const [winEvent,setWinEvent]=useState(null);
-  const [confetti,setConfetti]=useState(false);
+  
   const [showEndConfirm,setShowEndConfirm]=useState(false);
   const [pairingDay,setPairingDay]=useState(null); // dayIdx to edit
   const prevRef=useRef(null);
@@ -2171,9 +2286,9 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
   const [halftimePopup,setHalftimePopup]=useState(null); // {matchName, r1Label, pts, dayId, matchId}
 
   useEffect(()=>{if(!messaging)return;const u=onMessage(messaging,p=>{setToast({title:p.notification?.title,body:p.notification?.body});});return()=>u();},[]);
-  useEffect(()=>{if(prevRef.current){const change=detectPointChange(prevRef.current,days,t1Name,t2Name);if(change){setToast(change);if(change.winner){setWinEvent(change);setConfetti(true);}}}prevRef.current=days;},[days]);
+  useEffect(()=>{if(prevRef.current){const change=detectPointChange(prevRef.current,days,t1Name,t2Name);if(change){setToast(change);if(change.winner)setWinEvent(change);}}prevRef.current=days;},[days]);
 
-  const stats=calcTournament(days);const t1W=Math.max(5,Math.min(95,stats.t1WinProb));
+  const numDays=config.numDays||(config.daySettings?.length)||days.length;const matchesPerDay=config.matchesPerDay||(days[0]?.matches?.length||4);const stats=calcTournament(days,numDays,matchesPerDay);const t1W=Math.max(5,Math.min(95,stats.t1WinProb));
   const doReset=async matchId=>{setSaving(true);const nd=days.map(day=>({...day,matches:day.matches.map(m=>m.id===matchId?{...m,scores:emptyScores()}:m)}));await saveTournament({...config,days:nd});setSaving(false);};
   const doResetAll=async()=>{setSaving(true);const nd=days.map(day=>({...day,matches:day.matches.map(m=>({...m,scores:emptyScores()}))}));await saveTournament({...config,days:nd});setSaving(false);setResetAll(false);};
 
@@ -2237,6 +2352,19 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
     }
     // ────────────────────────────────────────────────────────────────────────
     await saveTournament({...config,days:nd});setSaving(false);
+    // Check tournament win
+    const newStats=calcTournament(nd,numDays,matchesPerDay);
+    if(newStats.t1Confirmed>=newStats.needed||newStats.t2Confirmed>=newStats.needed){
+      const winner=newStats.t1Confirmed>=newStats.needed?t1Name:t2Name;
+      const loser=winner===t1Name?t2Name:t1Name;
+      const wPts=newStats.t1Confirmed>=newStats.needed?newStats.t1Confirmed:newStats.t2Confirmed;
+      const lPts=newStats.t1Confirmed>=newStats.needed?newStats.t2Confirmed:newStats.t1Confirmed;
+      const winKey=`tournament-win-${winner}`;
+      if(winKey!==lastPushKey){
+        const {title,body}=buildTournamentWinMessage(winner,wPts,lPts,t1Name,t2Name);
+        await sendPushToAll(title,body,winKey);
+      }
+    }
     setModal(null);
   };
 
@@ -2251,7 +2379,7 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
 
   return(
     <div style={{minHeight:"100vh",background:T.bg,color:T.cream,fontFamily:"Georgia,serif"}}>
-      <Confetti active={confetti} onDone={()=>setConfetti(false)}/>
+      
       <WinBanner event={winEvent} onDone={()=>setWinEvent(null)}/>
       {toast&&<Toast message={toast} onDismiss={()=>setToast(null)}/>}
       {resetAll&&<ResetConfirm title="Alle Matches zurücksetzen?" message="Wirklich ALLE Scores löschen?" onConfirm={doResetAll} onClose={()=>setResetAll(false)} T={T}/>}
@@ -2398,7 +2526,7 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
       {modal&&mMatch&&mDay&&(
         <ScoreModal match={mMatch} holeIndex={modal.holeIndex} t1Name={t1Name} t2Name={t2Name} par={(COURSES[mDay.courseKey]||Object.values(COURSES)[0]).par} existing={mMatch.scores[modal.holeIndex]} onSave={(t1s,t2s)=>saveScore(modal.dayId,modal.matchId,modal.holeIndex,t1s,t2s)} onClose={()=>setModal(null)} T={T}/>
       )}
-      {pairingDay!==null&&<PairingEditor config={config} dayIdx={pairingDay} T={T} onClose={()=>setPairingDay(null)} onSave={newConfig=>{setPairingDay(null);}}/>}
+      {pairingDay!==null&&<PairingEditor config={config} dayIdx={pairingDay} T={T} onClose={()=>setPairingDay(null)} onSave={newConfig=>{setPairingDay(null);window.location.reload();}}/>}
     </div>
   );
 }
@@ -2439,7 +2567,7 @@ function MatchArchive({onBack,T,theme,onThemeToggle}){
         )}
         {archived.map(entry=>{
           const isOpen=expanded===entry._id;
-          const stats=entry.days?calcTournament(entry.days):null;
+          const stats=entry.days?calcTournament(entry.days,entry.numDays,entry.matchesPerDay):null;
           return(
             <div key={entry._id} style={{background:T.cardBg,border:`1px solid ${T.border}`,borderRadius:"12px",marginBottom:"12px",overflow:"hidden"}}>
               <div style={{padding:"12px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:"12px"}} onClick={()=>setExpanded(isOpen?null:entry._id)}>

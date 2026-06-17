@@ -11,9 +11,24 @@ firebase.initializeApp({
 });
 
 const messaging = firebase.messaging();
+
+// Fix 3: Only show background notification when app is NOT in foreground
+// When app is open, the onMessage handler in App.jsx handles it — no double push
 messaging.onBackgroundMessage((payload) => {
-  self.registration.showNotification(payload.notification.title, {
-    body: payload.notification.body,
-    icon: '/icon-192.svg'
+  // Check if any client (app window) is currently focused
+  self.clients.matchAll({type:'window',includeUncontrolled:true}).then(clients=>{
+    const appFocused=clients.some(c=>c.focused);
+    if(appFocused)return; // App is open and focused — skip, onMessage handles it
+    self.registration.showNotification(
+      payload.notification?.title||payload.data?.title||'Ryder Cup',
+      {
+        body: payload.notification?.body||payload.data?.body||'',
+        icon: '/icon-192.svg',
+        badge: '/icon-192.svg',
+        tag: payload.data?.dedupeKey||'ryder-push', // same tag = replace, not stack
+        renotify: false,
+      }
+    );
   });
 });
+
