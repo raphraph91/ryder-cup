@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
-const VERSION = "2.15";
+const VERSION = "2.16";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLlzavBNImCRG0JacPZWdVIxezxKiqHcc",
@@ -639,12 +639,15 @@ function ThemeToggle({theme,onToggle}){
 }
 
 // ── Player Avatar ─────────────────────────────────────────────────────────────
-function PlayerAvatar({name,size=36,color,photo}){
+function PlayerAvatar({name,size=36,color,photo,isCapt=false}){
   const initials=(name||"?").split(" ").map(p=>p[0]||"").slice(0,2).join("").toUpperCase();
   return(
-    <div style={{width:size,height:size,borderRadius:"50%",background:color+"22",border:`1.5px solid ${color}`,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,overflow:"hidden"}}>
-      {photo?<img src={photo} alt={name} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
-        :<span style={{fontSize:size*0.36,fontWeight:"700",color,fontFamily:"Arial,sans-serif"}}>{initials}</span>}
+    <div style={{position:"relative",width:size,height:size,flexShrink:0}}>
+      <div style={{width:size,height:size,borderRadius:"50%",background:color+"22",border:`1.5px solid ${color}`,display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
+        {photo?<img src={photo} alt={name} style={{width:"100%",height:"100%",objectFit:"cover"}}/>
+          :<span style={{fontSize:size*0.36,fontWeight:"700",color,fontFamily:"Arial,sans-serif"}}>{initials}</span>}
+      </div>
+      {isCapt&&<div style={{position:"absolute",bottom:-2,right:-2,width:Math.round(size*0.42),height:Math.round(size*0.42),borderRadius:"50%",background:"#C9A84C",border:"2px solid white",display:"flex",alignItems:"center",justifyContent:"center",fontSize:Math.round(size*0.22),lineHeight:1}}>🎖️</div>}
     </div>
   );
 }
@@ -1795,10 +1798,13 @@ function NineHoleGrid({scores,pars,startHole,matchId,onHoleClick,canEdit,T,round
         const finalBorder=isDead?`1px dashed ${T.border}`:border;
         const finalFilter=isDead?"saturate(0.25)":"none";
         return(
-          <div key={i} style={{borderRadius:"4px",cursor:canEdit?"pointer":"default",background:bg,color,border:finalBorder,userSelect:"none",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"2px 0",minHeight:showPerPlayer?"38px":"32px",opacity:finalOpacity,filter:finalFilter}} onClick={()=>canEdit&&onHoleClick(matchId,hn)}>
-            <div style={{fontSize:"9px",fontWeight:"700",lineHeight:1}}>{hn+1}</div>
-            <div style={{fontSize:"7px",opacity:0.6,lineHeight:1}}>P{p}</div>
-            {played&&!showPerPlayer&&<div style={{fontSize:"8px",fontWeight:"900",lineHeight:1}}>{t1}:{t2}</div>}
+          <div key={i} style={{borderRadius:"4px",cursor:canEdit?"pointer":"default",background:bg,color,border:finalBorder,userSelect:"none",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"3px 0",minHeight:showPerPlayer?"38px":"30px",opacity:finalOpacity,filter:finalFilter}} onClick={()=>canEdit&&onHoleClick(matchId,hn)}>
+            {/* Num + Par in one line */}
+            <div style={{display:"flex",alignItems:"center",gap:"2px",lineHeight:1}}>
+              <div style={{fontSize:"8px",fontWeight:"700"}}>{hn+1}</div>
+              <div style={{fontSize:"7px",opacity:0.55}}>P{p}</div>
+            </div>
+            {played&&!showPerPlayer&&<div style={{fontSize:"10px",fontWeight:"900",lineHeight:1,marginTop:"1px"}}>{t1}:{t2}</div>}
             {played&&showPerPlayer&&(
               <div style={{fontSize:"7px",lineHeight:1.1,textAlign:"center"}}>
                 {isFourball&&(
@@ -1821,6 +1827,18 @@ function NineHoleGrid({scores,pars,startHole,matchId,onHoleClick,canEdit,T,round
   );
 }
 
+// Abbreviate: "Philipp von Hobe" → ["Philipp", "von Hobe"] / "Raphael Walter" → ["Raphael", "Walter"]
+function splitName(full){
+  if(!full)return["",""];
+  const parts=full.trim().split(" ");
+  if(parts.length===1)return[parts[0],""];
+  const firstName=parts[0];
+  const rest=parts.slice(1).join(" ");
+  // abbreviate particles: "von"→"v.", "van"→"v.", "de"→"d.", "der"→"d."
+  const abbr=rest.replace(/\b(von|van|de|der|den|des|del|della|di|du)\b/gi,m=>m[0].toLowerCase()+".");
+  return[firstName,abbr];
+}
+
 function MatchCard({match,pars,t1Name,t2Name,canEdit,isAdmin,onHoleClick,onReset,T,captainT1,captainT2}){
   const [showReset,setShowReset]=useState(false);
   const r1=calcRoundStatus(match.scores,pars,0,9,match.mode);const r2=calcRoundStatus(match.scores,pars,9,18,match.mode);
@@ -1836,9 +1854,8 @@ function MatchCard({match,pars,t1Name,t2Name,canEdit,isAdmin,onHoleClick,onReset
     return(
       <div style={{flex:1,background:T.isDark?"#0A2014":T.elevated,borderRadius:"6px",padding:"6px 8px",textAlign:"center",border:`1px solid ${T.border}`}}>
         <div style={{fontSize:"9px",color:T.faint}}>{label}</div>
-        <div style={{fontSize:"14px",fontWeight:"900",color,fontFamily:"'Arial Black',sans-serif"}}>{rs.holesPlayed===0?"—":rs.label}</div>
-        {(rs.won||rs.holesLeft===0)&&pts&&<div style={{fontSize:"9px",color:T.muted,marginTop:"2px"}}>{pts.t1}–{pts.t2} Pts</div>}
-        {!rs.won&&rs.holesLeft>0&&rs.holesPlayed>0&&<div style={{fontSize:"9px",color:T.faint,marginTop:"2px"}}>{rs.holesLeft} left</div>}
+        <div style={{fontSize:"18px",fontWeight:"900",color,fontFamily:"'Arial Black',sans-serif",lineHeight:1.1}}>{rs.holesPlayed===0?"—":rs.label}</div>
+        {!rs.won&&rs.holesLeft>0&&rs.holesPlayed>0&&<div style={{fontSize:"9px",color:T.faint,marginTop:"1px"}}>{rs.holesLeft} left</div>}
       </div>
     );
   };
@@ -1857,52 +1874,46 @@ function MatchCard({match,pars,t1Name,t2Name,canEdit,isAdmin,onHoleClick,onReset
               {(canEdit||isAdmin)&&<button onClick={()=>setShowReset(true)} style={{background:"transparent",border:`1px solid ${T.border}`,borderRadius:"6px",color:T.faint,padding:"4px 7px",cursor:"pointer",display:"flex",alignItems:"center",gap:"4px",fontSize:"10px"}}><IconReset size={11} color={T.faint}/></button>}
             </div>
           </div>
-          {/* Fix 4: Players stacked, larger avatar, Vorname/Nachname on separate lines */}
-          <div style={{display:"flex",gap:"8px",marginTop:"4px"}}>
-            {/* Team 1 */}
+          {/* Players: compact, captain badge on avatar, HCP in middle, name Vorname/Nachname */}
+          <div style={{display:"flex",gap:"4px",alignItems:"center",marginTop:"6px"}}>
             <div style={{flex:1}}>
               <div style={{fontSize:"8px",color:T.blue,fontWeight:"700",letterSpacing:"1px",marginBottom:"5px"}}>{t1Name}</div>
               {(match.t1Pair||[]).map((fullName,i)=>{
                 const pid=t1PlayerIds[i];const photo=pid?t1Photos[pid]:null;
-                const parts=fullName.trim().split(" ");
-                const firstName=parts[0]||"";const lastName=parts.slice(1).join(" ")||"";
+                const isCaptP=captainT1&&pid===captainT1;
+                const [fn,ln]=splitName(fullName);
                 return(
-                  <div key={i} style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:i<(match.t1Pair||[]).length-1?"6px":"0"}}>
-                    <PlayerAvatar name={fullName} size={36} color={T.blue} photo={photo}/>
+                  <div key={i} style={{display:"flex",alignItems:"center",gap:"7px",marginBottom:i<(match.t1Pair||[]).length-1?"5px":"0"}}>
+                    <PlayerAvatar name={fullName} size={36} color={T.blue} photo={photo} isCapt={isCaptP}/>
                     <div>
-                      <div style={{fontSize:"11px",fontWeight:"700",color:T.blue,lineHeight:1.25}}>{firstName}</div>
-                      <div style={{fontSize:"11px",fontWeight:"700",color:T.blue,lineHeight:1.25}}>{lastName}</div>
+                      <div style={{fontSize:"11px",fontWeight:"700",color:T.blue,lineHeight:1.25}}>{fn}</div>
+                      <div style={{fontSize:"11px",fontWeight:"700",color:T.blue,lineHeight:1.25}}>{ln}</div>
                     </div>
                   </div>
                 );
               })}
-              <div style={{display:"flex",alignItems:"center",gap:"4px",marginTop:"4px",flexWrap:"wrap"}}>
-                {t1HasCapt&&<span style={{fontSize:"9px",background:T.gold+"33",color:T.gold,borderRadius:"4px",padding:"1px 5px",fontWeight:"700"}}>🎖️ C</span>}
-                {match.teamHcp1!=null&&<div style={{fontSize:"9px",color:T.blue+"88"}}>HCP {match.teamHcp1}</div>}
-              </div>
             </div>
-            <div style={{display:"flex",alignItems:"center",fontSize:"10px",color:T.muted,padding:"0 2px"}}>vs</div>
-            {/* Team 2 */}
+            <div style={{display:"flex",flexDirection:"column",alignItems:"center",gap:"4px",padding:"0 4px",flexShrink:0}}>
+              <span style={{fontSize:"9px",color:T.faint,whiteSpace:"nowrap"}}>{match.teamHcp1!=null?`HCP ${match.teamHcp1}`:""}</span>
+              <span style={{fontSize:"10px",color:T.muted}}>vs</span>
+              <span style={{fontSize:"9px",color:T.faint,whiteSpace:"nowrap"}}>{match.teamHcp2!=null?`HCP ${match.teamHcp2}`:""}</span>
+            </div>
             <div style={{flex:1}}>
               <div style={{fontSize:"8px",color:T.red,fontWeight:"700",letterSpacing:"1px",marginBottom:"5px",textAlign:"right"}}>{t2Name}</div>
               {(match.t2Pair||[]).map((fullName,i)=>{
                 const pid=t2PlayerIds[i];const photo=pid?t2Photos[pid]:null;
-                const parts=fullName.trim().split(" ");
-                const firstName=parts[0]||"";const lastName=parts.slice(1).join(" ")||"";
+                const isCaptP=captainT2&&pid===captainT2;
+                const [fn,ln]=splitName(fullName);
                 return(
-                  <div key={i} style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:i<(match.t2Pair||[]).length-1?"6px":"0",flexDirection:"row-reverse"}}>
-                    <PlayerAvatar name={fullName} size={36} color={T.red} photo={photo}/>
+                  <div key={i} style={{display:"flex",alignItems:"center",gap:"7px",marginBottom:i<(match.t2Pair||[]).length-1?"5px":"0",flexDirection:"row-reverse"}}>
+                    <PlayerAvatar name={fullName} size={36} color={T.red} photo={photo} isCapt={isCaptP}/>
                     <div style={{textAlign:"right"}}>
-                      <div style={{fontSize:"11px",fontWeight:"700",color:T.red,lineHeight:1.25}}>{firstName}</div>
-                      <div style={{fontSize:"11px",fontWeight:"700",color:T.red,lineHeight:1.25}}>{lastName}</div>
+                      <div style={{fontSize:"11px",fontWeight:"700",color:T.red,lineHeight:1.25}}>{fn}</div>
+                      <div style={{fontSize:"11px",fontWeight:"700",color:T.red,lineHeight:1.25}}>{ln}</div>
                     </div>
                   </div>
                 );
               })}
-              <div style={{display:"flex",alignItems:"center",gap:"4px",marginTop:"4px",flexWrap:"wrap",justifyContent:"flex-end"}}>
-                {t2HasCapt&&<span style={{fontSize:"9px",background:T.gold+"33",color:T.gold,borderRadius:"4px",padding:"1px 5px",fontWeight:"700"}}>🎖️ C</span>}
-                {match.teamHcp2!=null&&<div style={{fontSize:"9px",color:T.red+"88"}}>HCP {match.teamHcp2}</div>}
-              </div>
             </div>
           </div>
         </div>
@@ -1911,34 +1922,34 @@ function MatchCard({match,pars,t1Name,t2Name,canEdit,isAdmin,onHoleClick,onReset
             <RoundBadge rs={r1} pts={getPoints(r1)} label="Runde 1 (L. 1–9)"/>
             <RoundBadge rs={r2} pts={getPoints(r2)} label="Runde 2 (L. 10–18)"/>
           </div>
-          <div style={{margin:"0 0 6px",display:"flex",alignItems:"center",gap:"6px"}}>
-            <div style={{flex:1,height:"1px",background:`linear-gradient(90deg,transparent,${T.blue}44)`}}/>
-            <div style={{fontSize:"9px",color:T.blue,fontWeight:"700",letterSpacing:"1px",background:T.blue+"18",border:`1px solid ${T.blue}44`,borderRadius:"4px",padding:"2px 8px"}}>🏌️ RUNDE 1</div>
-            <div style={{flex:1,height:"1px",background:`linear-gradient(90deg,${T.blue}44,transparent)`}}/>
-          </div>
+          {/* Round divider R1: color = leader of that round */}
+          {(()=>{
+            const r1color=r1.diff>0?T.blue:r1.diff<0?T.red:T.muted;
+            const r1bg=r1.diff>0?T.blue+"18":r1.diff<0?T.red+"18":T.elevated;
+            const r1border=r1.diff>0?T.blue+"44":r1.diff<0?T.red+"44":T.border;
+            return(
+              <div style={{margin:"0 0 4px",display:"flex",alignItems:"center",gap:"6px"}}>
+                <div style={{flex:1,height:"1px",background:`linear-gradient(90deg,transparent,${r1color}44)`}}/>
+                <div style={{fontSize:"9px",color:r1color,fontWeight:"700",letterSpacing:"1px",background:r1bg,border:`1px solid ${r1border}`,borderRadius:"4px",padding:"2px 10px"}}>RUNDE 1</div>
+                <div style={{flex:1,height:"1px",background:`linear-gradient(90deg,${r1color}44,transparent)`}}/>
+              </div>
+            );
+          })()}
           <NineHoleGrid scores={match.scores} pars={pars} startHole={0} matchId={match.id} onHoleClick={onHoleClick} canEdit={canEdit} T={T} roundStatus={r1} mode={match.mode}/>
-          {/* Fix 5: R1 summary under the holes */}
-          {r1.holesPlayed>0&&(
-            <div style={{display:"flex",justifyContent:"center",marginTop:"6px",marginBottom:"2px"}}>
-              <div style={{background:r1.diff>0?T.blue+"22":r1.diff<0?T.red+"22":T.elevated,border:`1px solid ${r1.diff>0?T.blue:r1.diff<0?T.red:T.border}`,borderRadius:"6px",padding:"3px 12px",fontSize:"11px",fontWeight:"900",color:r1.diff>0?T.blue:r1.diff<0?T.red:T.muted,fontFamily:"'Arial Black',sans-serif"}}>
-                R1: {r1.label}{r1.won?"":" ↳"}{r1.holesLeft>0&&!r1.won?` · ${r1.holesLeft} left`:""}
+          {/* Round divider R2: color = leader of that round */}
+          {(()=>{
+            const r2color=r2.diff>0?T.blue:r2.diff<0?T.red:T.muted;
+            const r2bg=r2.diff>0?T.blue+"18":r2.diff<0?T.red+"18":T.elevated;
+            const r2border=r2.diff>0?T.blue+"44":r2.diff<0?T.red+"44":T.border;
+            return(
+              <div style={{margin:"8px 0 4px",display:"flex",alignItems:"center",gap:"6px"}}>
+                <div style={{flex:1,height:"1px",background:`linear-gradient(90deg,transparent,${r2color}44)`}}/>
+                <div style={{fontSize:"9px",color:r2color,fontWeight:"700",letterSpacing:"1px",background:r2bg,border:`1px solid ${r2border}`,borderRadius:"4px",padding:"2px 10px"}}>RUNDE 2</div>
+                <div style={{flex:1,height:"1px",background:`linear-gradient(90deg,${r2color}44,transparent)`}}/>
               </div>
-            </div>
-          )}
-          <div style={{margin:"8px 0 6px",display:"flex",alignItems:"center",gap:"6px"}}>
-            <div style={{flex:1,height:"1px",background:`linear-gradient(90deg,transparent,${T.gold}44)`}}/>
-            <div style={{fontSize:"9px",color:T.gold,fontWeight:"700",letterSpacing:"1px",background:T.gold+"18",border:`1px solid ${T.gold}44`,borderRadius:"4px",padding:"2px 8px"}}>⛳ RUNDE 2</div>
-            <div style={{flex:1,height:"1px",background:`linear-gradient(90deg,${T.gold}44,transparent)`}}/>
-          </div>
+            );
+          })()}
           <NineHoleGrid scores={match.scores} pars={pars} startHole={9} matchId={match.id} onHoleClick={onHoleClick} canEdit={canEdit} T={T} roundStatus={r2} mode={match.mode}/>
-          {/* Fix 5: R2 summary under the holes */}
-          {r2.holesPlayed>0&&(
-            <div style={{display:"flex",justifyContent:"center",marginTop:"6px"}}>
-              <div style={{background:r2.diff>0?T.blue+"22":r2.diff<0?T.red+"22":T.elevated,border:`1px solid ${r2.diff>0?T.blue:r2.diff<0?T.red:T.border}`,borderRadius:"6px",padding:"3px 12px",fontSize:"11px",fontWeight:"900",color:r2.diff>0?T.blue:r2.diff<0?T.red:T.muted,fontFamily:"'Arial Black',sans-serif"}}>
-                R2: {r2.label}{r2.won?"":" ↳"}{r2.holesLeft>0&&!r2.won?` · ${r2.holesLeft} left`:""}
-              </div>
-            </div>
-          )}
           {!canEdit&&!isAdmin&&<div style={{marginTop:"8px",fontSize:"10px",color:T.faint,textAlign:"center"}}>🔒 Nur lesbar</div>}
         </div>
       </div>
