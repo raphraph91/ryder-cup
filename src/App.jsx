@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
-const VERSION = "2.13";
+const VERSION = "2.14";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLlzavBNImCRG0JacPZWdVIxezxKiqHcc",
@@ -23,7 +23,16 @@ let lastPushKey = null;
 async function saveTournament(data) { await setDoc(doc(db,"tournaments","ryder2024"),data); }
 async function archiveTournament(data) {
   const archived = { ...data, archivedAt: Date.now(), archivedAtLabel: new Date().toLocaleDateString("de-DE",{day:"2-digit",month:"2-digit",year:"numeric"}) };
-  await addDoc(collection(db,"tournamentArchive"), archived);
+  const archiveRef = await addDoc(collection(db,"tournamentArchive"), archived);
+  // Save chat messages as subcollection for archive
+  try{
+    const chatSnap=await getDocs(collection(db,"liveChat"));
+    const batch=[];
+    chatSnap.docs.forEach(d=>{
+      batch.push(setDoc(doc(db,"tournamentArchive",archiveRef.id,"chat",d.id),d.data()));
+    });
+    await Promise.all(batch);
+  }catch(e){}
 }
 async function registerFCMToken() {
   if(!messaging) return null;
@@ -773,26 +782,117 @@ function PlayerManager({onBack,T,theme,onThemeToggle}){
   const [showForm,setShowForm]=useState(false);
   const [fn,setFn]=useState(""); const [ln,setLn]=useState(""); const [hcp,setHcp]=useState(""); const [photo,setPhoto]=useState(null);
   const [saving,setSaving]=useState(false); const [confirmDelete,setConfirmDelete]=useState(null);
-  const [cropSrc,setCropSrc]=useState(null); const [cropScale,setCropScale]=useState(1);
+  const [cropSrc,setCropSrc]=useState(null);
+  const [cropScale,setCropScale]=useState(1);
+  const [baseScale,setBaseScale]=useState(1);
+  const [cropX,setCropX]=useState(0);
+  const [cropY,setCropY]=useState(0);
+  const [dragging,setDragging]=useState(false);
+  const [dragStart,setDragStart]=useState({x:0,y:0,ox:0,oy:0});
+  const imgRef=useRef(null);
+  const CROP_SIZE=200;
 
   useEffect(()=>{getDocs(collection(db,"savedPlayers")).then(snap=>{setPlayers(snap.docs.map(d=>({id:d.id,...d.data()})));setLoading(false);}).catch(()=>setLoading(false));},[]);
 
-  const handlePhotoChange=e=>{const file=e.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=ev=>{setCropSrc(ev.target.result);setCropScale(1);};reader.readAsDataURL(file);};
+  const handlePhotoChange=e=>{
+    const file=e.target.files[0];if(!file)return;
+    const reader=new FileReader();
+    reader.onload=ev=>{
+      const tmp=new Image();
+      tmp.onload=()=>{
+        const fit=CROP_SIZE/Math.min(tmp.naturalWidth,tmp.naturalHeight);
+        setBaseScale(fit);setCropScale(1);setCropX(0);setCropY(0);
+        setCropSrc(ev.target.result);
+      };
+      tmp.src=ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const startDrag=e=>{
+    e.preventDefault();
+    const cx=e.touches?e.touches[0].clientX:e.clientX;
+    const cy=e.touches?e.touches[0].clientY:e.clientY;
+    setDragging(true);setDragStart({x:cx,y:cy,ox:cropX,oy:cropY});
+  };
+  const onDrag=e=>{
+    if(!dragging)return;e.preventDefault();
+    const cx=e.touches?e.touches[0].clientX:e.clientX;
+    const cy=e.touches?e.touches[0].clientY:e.clientY;
+    setCropX(dragStart.ox+(cx-dragStart.x));setCropY(dragStart.oy+(cy-dragStart.y));
+  };
+  const endDrag=()=>setDragging(false);
+
   const cropAndSave=()=>{
-    const size=200;const canvas=document.createElement("canvas");canvas.width=size;canvas.height=size;
+    const canvas=document.createElement("canvas");canvas.width=CROP_SIZE;canvas.height=CROP_SIZE;
     const ctx=canvas.getContext("2d");const img=new Image();
-    img.onload=()=>{const s=Math.min(img.width,img.height)*cropScale;const sx=(img.width-s)/2;const sy=(img.height-s)/2;ctx.beginPath();ctx.arc(size/2,size/2,size/2,0,Math.PI*2);ctx.clip();ctx.drawImage(img,sx,sy,s,s,0,0,size,size);setPhoto(canvas.toDataURL("image/jpeg",0.8));setCropSrc(null);};
+    img.onload=()=>{
+      const totalScale=baseScale*cropScale;
+      const dispW=img.naturalWidth*totalScale;
+      const dispH=img.naturalHeight*totalScale;
+      const cx=(CROP_SIZE-dispW)/2+cropX;
+      const cy=(CROP_SIZE-dispH)/2+cropY;
+      const sx=-cx/totalScale;const sy=-cy/totalScale;
+      const sw=CROP_SIZE/totalScale;const sh=CROP_SIZE/totalScale;
+      ctx.beginPath();ctx.arc(CROP_SIZE/2,CROP_SIZE/2,CROP_SIZE/2,0,Math.PI*2);ctx.clip();
+      ctx.drawImage(img,sx,sy,sw,sh,0,0,CROP_SIZE,CROP_SIZE);
+      setPhoto(canvas.toDataURL("image/jpeg",0.65));setCropSrc(null);
+    };
     img.src=cropSrc;
   };
+
   const startEdit=p=>{setEditingId(p.id);setFn(p.fn||"");setLn(p.ln||"");setHcp(p.hcp||"");setPhoto(p.photo||null);setShowForm(true);};
   const resetForm=()=>{setEditingId(null);setFn("");setLn("");setHcp("");setPhoto(null);setShowForm(false);};
+
+  // Fix 3: propagate player changes to active tournament matches
+  const propagateToTournament=async(id,data)=>{
+    try{
+      const snap=await getDoc(doc(db,"tournaments","ryder2024"));
+      if(!snap.exists())return;
+      const cfg=snap.data();
+      if(!cfg.days)return;
+      let changed=false;
+      const newDays=cfg.days.map(day=>({...day,matches:day.matches.map(m=>{
+        let nm={...m};
+        const inT1=(m.t1PlayerIds||[]).includes(id);
+        const inT2=(m.t2PlayerIds||[]).includes(id);
+        if(!inT1&&!inT2)return m;
+        changed=true;
+        const fullName=`${data.fn} ${data.ln}`;
+        if(inT1){
+          const idx=(m.t1PlayerIds||[]).indexOf(id);
+          const newPair=[...(m.t1Pair||[])];newPair[idx]=fullName;
+          const newPhotos={...(m.t1Photos||{})};newPhotos[id]=data.photo||null;
+          nm={...nm,t1Pair:newPair,t1Photos:newPhotos};
+        }
+        if(inT2){
+          const idx=(m.t2PlayerIds||[]).indexOf(id);
+          const newPair=[...(m.t2Pair||[])];newPair[idx]=fullName;
+          const newPhotos={...(m.t2Photos||{})};newPhotos[id]=data.photo||null;
+          nm={...nm,t2Pair:newPair,t2Photos:newPhotos};
+        }
+        return nm;
+      })}));
+      // Also update team player lists
+      const t1Players=(cfg.t1Players||[]).map(p=>p.id===id?{...p,...data}:p);
+      const t2Players=(cfg.t2Players||[]).map(p=>p.id===id?{...p,...data}:p);
+      if(changed||t1Players.some(p=>p.id===id)||t2Players.some(p=>p.id===id)){
+        await setDoc(doc(db,"tournaments","ryder2024"),{...cfg,days:newDays,t1Players,t2Players});
+      }
+    }catch(e){}
+  };
+
   const savePlayer=async()=>{
     if(!fn.trim()||!ln.trim())return;setSaving(true);
     const id=editingId||("p"+Date.now());const data={fn:fn.trim(),ln:ln.trim(),hcp:hcp||"",photo:photo||null};
     await setDoc(doc(db,"savedPlayers",id),data).catch(()=>{});
-    if(editingId){setPlayers(prev=>prev.map(p=>p.id===id?{id,...data}:p));}else{setPlayers(prev=>[...prev,{id,...data}]);}
+    if(editingId){
+      setPlayers(prev=>prev.map(p=>p.id===id?{id,...data}:p));
+      await propagateToTournament(id,data); // Fix 3
+    }else{setPlayers(prev=>[...prev,{id,...data}]);}
     setSaving(false);resetForm();
   };
+
   const deletePlayer=async id=>{await deleteDoc(doc(db,"savedPlayers",id)).catch(()=>{});setPlayers(prev=>prev.filter(p=>p.id!==id));setConfirmDelete(null);};
   const inp={background:T.isDark?"#0A2014":T.elevated,border:`1px solid ${T.border}`,borderRadius:"8px",color:T.cream,fontSize:"14px",padding:"10px 12px",outline:"none",boxSizing:"border-box",width:"100%",marginBottom:"10px"};
 
@@ -830,23 +930,32 @@ function PlayerManager({onBack,T,theme,onThemeToggle}){
                 </label>
               </div>
             </div>
-            <div style={{fontSize:"10px",color:T.faint,textAlign:"center",marginBottom:"16px"}}>Tippe das Kamera-Icon für Foto</div>
             {[["VORNAME *",fn,setFn,"Vorname"],["NACHNAME *",ln,setLn,"Nachname"],["HANDICAP",hcp,setHcp,"z.B. 8.4"]].map(([lbl,val,setter,ph])=>(
               <div key={lbl}><div style={{fontSize:"10px",color:T.muted,letterSpacing:"1px",marginBottom:"4px"}}>{lbl}</div><input style={inp} placeholder={ph} value={val} onChange={e=>setter(e.target.value)}/></div>
             ))}
             <button onClick={savePlayer} disabled={!fn.trim()||!ln.trim()||saving}
               style={{width:"100%",padding:"13px",background:(!fn.trim()||!ln.trim())?T.elevated:`linear-gradient(135deg,${T.gold},#A07830)`,border:"none",borderRadius:"8px",color:(!fn.trim()||!ln.trim())?T.muted:T.isDark?"#0D2B1A":"white",fontSize:"14px",fontWeight:"900",letterSpacing:"2px",textTransform:"uppercase",cursor:"pointer",marginBottom:"8px",opacity:(!fn.trim()||!ln.trim())?0.5:1}}>
-              {saving?"Speichere...":"Speichern"}
+              {saving?"Speichere...":editingId?"Änderungen speichern":"Spieler hinzufügen"}
             </button>
             <button onClick={resetForm} style={{width:"100%",padding:"10px",background:"transparent",border:`1px solid ${T.border}`,borderRadius:"8px",color:T.muted,fontSize:"13px",cursor:"pointer"}}>Abbrechen</button>
           </div>
         )}
       </div>
+      {/* Fix 2: Full drag+zoom crop overlay */}
       {cropSrc&&(
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.92)",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",zIndex:400,padding:"20px"}}>
-          <div style={{fontSize:"14px",fontWeight:"700",color:T.gold,marginBottom:"16px"}}>Foto zuschneiden</div>
-          <div style={{position:"relative",width:"200px",height:"200px",borderRadius:"50%",overflow:"hidden",border:`3px solid ${T.gold}`,marginBottom:"16px"}}><img src={cropSrc} style={{width:"100%",height:"100%",objectFit:"cover",transform:`scale(${cropScale})`,transformOrigin:"center"}} alt="crop"/></div>
-          <div style={{width:"100%",maxWidth:"280px",marginBottom:"16px"}}><div style={{fontSize:"10px",color:T.muted,marginBottom:"4px"}}>Zoom</div><input type="range" min="1" max="3" step="0.05" value={cropScale} onChange={e=>setCropScale(Number(e.target.value))} style={{width:"100%",accentColor:T.gold}}/></div>
+          <div style={{fontSize:"14px",fontWeight:"700",color:T.gold,marginBottom:"8px"}}>Foto zuschneiden</div>
+          <div style={{fontSize:"11px",color:T.muted,marginBottom:"16px"}}>Verschieben · Zoom mit Slider</div>
+          <div
+            style={{position:"relative",width:`${CROP_SIZE}px`,height:`${CROP_SIZE}px`,borderRadius:"50%",overflow:"hidden",border:`3px solid ${T.gold}`,marginBottom:"16px",cursor:dragging?"grabbing":"grab",userSelect:"none",touchAction:"none",flexShrink:0}}
+            onMouseDown={startDrag} onMouseMove={onDrag} onMouseUp={endDrag} onMouseLeave={endDrag}
+            onTouchStart={startDrag} onTouchMove={onDrag} onTouchEnd={endDrag}>
+            <img ref={imgRef} src={cropSrc} style={{position:"absolute",width:`${imgRef.current?imgRef.current.naturalWidth*baseScale*cropScale:CROP_SIZE}px`,height:"auto",left:`${(CROP_SIZE-(imgRef.current?imgRef.current.naturalWidth*baseScale*cropScale:CROP_SIZE))/2+cropX}px`,top:`${(CROP_SIZE-(imgRef.current?imgRef.current.naturalHeight*baseScale*cropScale:CROP_SIZE))/2+cropY}px`,pointerEvents:"none",maxWidth:"none"}} alt="crop"/>
+          </div>
+          <div style={{width:"100%",maxWidth:"280px",marginBottom:"16px"}}>
+            <div style={{fontSize:"10px",color:T.muted,marginBottom:"4px"}}>Zoom</div>
+            <input type="range" min="1" max="4" step="0.05" value={cropScale} onChange={e=>setCropScale(Number(e.target.value))} style={{width:"100%",accentColor:T.gold}}/>
+          </div>
           <div style={{display:"flex",gap:"10px",width:"100%",maxWidth:"280px"}}>
             <button onClick={cropAndSave} style={{flex:1,padding:"12px",background:`linear-gradient(135deg,${T.gold},#A07830)`,border:"none",borderRadius:"8px",color:T.isDark?"#0D2B1A":"white",fontSize:"13px",fontWeight:"900",cursor:"pointer"}}>Übernehmen ✓</button>
             <button onClick={()=>setCropSrc(null)} style={{flex:1,padding:"12px",background:"transparent",border:`1px solid ${T.border}`,borderRadius:"8px",color:T.muted,fontSize:"13px",cursor:"pointer"}}>Abbrechen</button>
@@ -1744,7 +1853,7 @@ function MatchCard({match,pars,t1Name,t2Name,canEdit,isAdmin,onHoleClick,onReset
               <div style={{fontSize:"10px",color:T.faint}}>{mode?.icon} {mode?.label}</div>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:"8px"}}>
-              {match.pin&&<div style={{fontSize:"9px",color:T.faint,fontFamily:"monospace"}}>{match.pin}</div>}
+              {match.pin&&<div style={{fontSize:"9px",color:T.faint,fontFamily:"monospace"}}>ID: {match.pin}</div>}
               {(canEdit||isAdmin)&&<button onClick={()=>setShowReset(true)} style={{background:"transparent",border:`1px solid ${T.border}`,borderRadius:"6px",color:T.faint,padding:"4px 7px",cursor:"pointer",display:"flex",alignItems:"center",gap:"4px",fontSize:"10px"}}><IconReset size={11} color={T.faint}/></button>}
             </div>
           </div>
@@ -1783,12 +1892,28 @@ function MatchCard({match,pars,t1Name,t2Name,canEdit,isAdmin,onHoleClick,onReset
             <div style={{flex:1,height:"1px",background:`linear-gradient(90deg,${T.blue}44,transparent)`}}/>
           </div>
           <NineHoleGrid scores={match.scores} pars={pars} startHole={0} matchId={match.id} onHoleClick={onHoleClick} canEdit={canEdit} T={T} roundStatus={r1} mode={match.mode}/>
+          {/* Fix 5: R1 summary under the holes */}
+          {r1.holesPlayed>0&&(
+            <div style={{display:"flex",justifyContent:"center",marginTop:"6px",marginBottom:"2px"}}>
+              <div style={{background:r1.diff>0?T.blue+"22":r1.diff<0?T.red+"22":T.elevated,border:`1px solid ${r1.diff>0?T.blue:r1.diff<0?T.red:T.border}`,borderRadius:"6px",padding:"3px 12px",fontSize:"11px",fontWeight:"900",color:r1.diff>0?T.blue:r1.diff<0?T.red:T.muted,fontFamily:"'Arial Black',sans-serif"}}>
+                R1: {r1.label}{r1.won?"":" ↳"}{r1.holesLeft>0&&!r1.won?` · ${r1.holesLeft} left`:""}
+              </div>
+            </div>
+          )}
           <div style={{margin:"8px 0 6px",display:"flex",alignItems:"center",gap:"6px"}}>
             <div style={{flex:1,height:"1px",background:`linear-gradient(90deg,transparent,${T.gold}44)`}}/>
             <div style={{fontSize:"9px",color:T.gold,fontWeight:"700",letterSpacing:"1px",background:T.gold+"18",border:`1px solid ${T.gold}44`,borderRadius:"4px",padding:"2px 8px"}}>⛳ RUNDE 2</div>
             <div style={{flex:1,height:"1px",background:`linear-gradient(90deg,${T.gold}44,transparent)`}}/>
           </div>
           <NineHoleGrid scores={match.scores} pars={pars} startHole={9} matchId={match.id} onHoleClick={onHoleClick} canEdit={canEdit} T={T} roundStatus={r2} mode={match.mode}/>
+          {/* Fix 5: R2 summary under the holes */}
+          {r2.holesPlayed>0&&(
+            <div style={{display:"flex",justifyContent:"center",marginTop:"6px"}}>
+              <div style={{background:r2.diff>0?T.blue+"22":r2.diff<0?T.red+"22":T.elevated,border:`1px solid ${r2.diff>0?T.blue:r2.diff<0?T.red:T.border}`,borderRadius:"6px",padding:"3px 12px",fontSize:"11px",fontWeight:"900",color:r2.diff>0?T.blue:r2.diff<0?T.red:T.muted,fontFamily:"'Arial Black',sans-serif"}}>
+                R2: {r2.label}{r2.won?"":" ↳"}{r2.holesLeft>0&&!r2.won?` · ${r2.holesLeft} left`:""}
+              </div>
+            </div>
+          )}
           {!canEdit&&!isAdmin&&<div style={{marginTop:"8px",fontSize:"10px",color:T.faint,textAlign:"center"}}>🔒 Nur lesbar</div>}
         </div>
       </div>
@@ -2550,7 +2675,7 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
       <div style={{padding:"14px",maxWidth:"480px",margin:"0 auto"}}>
         {showPush&&!pushGranted&&<PushBanner onDismiss={()=>setShowPush(false)} T={T}/>}
         <div style={{display:"flex",alignItems:"center",justifyContent:"center",marginBottom:"12px"}}><RoleBadge role={role} T={T}/></div>
-        {myMatchName&&<div style={{background:T.isDark?`linear-gradient(135deg,${T.gold}22,${T.gold}11)`:T.gold+"18",border:`1px solid ${T.gold}55`,borderRadius:"10px",padding:"10px 14px",marginBottom:"14px",display:"flex",alignItems:"center",gap:"10px"}}><div style={{fontSize:"16px"}}>⛳</div><div><div style={{fontSize:"12px",fontWeight:"700",color:T.gold}}>Du spielst {myMatchName}</div><div style={{fontSize:"10px",color:T.faint}}>Tippe auf ein Loch zum Eintragen</div></div></div>}
+        {/* Fix 7: removed redundant "Du spielst Match X" banner — info is on the match card itself */}
 
         <div style={{background:T.cardBg,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"14px"}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"10px"}}>
@@ -2669,7 +2794,22 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
                         filter:"drop-shadow(0 4px 12px rgba(0,0,0,0.4))"
                       }:{})
                     }}>
-                    <MatchCard match={m} pars={course.par} t1Name={t1Name} t2Name={t2Name} canEdit={canEdit(m.id,activeDay.id)} isAdmin={isAdmin} T={T} captainT1={config.captainT1} captainT2={config.captainT2} onHoleClick={(matchId,hi)=>setModal({dayId:activeDay.id,matchId,holeIndex:hi})} onReset={doReset}/>
+                    <MatchCard match={m} pars={course.par} t1Name={t1Name} t2Name={t2Name} canEdit={canEdit(m.id,activeDay.id)} isAdmin={isAdmin} T={T} captainT1={config.captainT1} captainT2={config.captainT2} onHoleClick={(matchId,hi)=>{
+                      // Fix 4: sequential check — only allow if previous hole is filled (admins bypass)
+                      if(!isAdmin&&hi>0){
+                        const match=activeDay.matches.find(x=>x.id===matchId);
+                        if(match){
+                          const prev=match.scores[hi-1];
+                          const {t1,t2}=effectiveScores(prev,match.mode);
+                          if(t1===null||t2===null){
+                            // Show toast instead of modal
+                            setToast({title:`Loch ${hi} zuerst eintragen`,body:`Bitte trage erst Loch ${hi} ein bevor du zu Loch ${hi+1} gehst.`});
+                            return;
+                          }
+                        }
+                      }
+                      setModal({dayId:activeDay.id,matchId,holeIndex:hi});
+                    }} onReset={doReset}/>
                   </div>
                 );
               });
@@ -2697,7 +2837,9 @@ function MatchArchive({onBack,T,theme,onThemeToggle}){
   const [archived,setArchived]=useState([]);
   const [loading,setLoading]=useState(true);
   const [expanded,setExpanded]=useState(null);
+  const [archiveTab,setArchiveTab]=useState("scores"); // "scores"|"stats"|"chat"
   const [confirmDelete,setConfirmDelete]=useState(null);
+  const [archivedChats,setArchivedChats]=useState({});
 
   useEffect(()=>{
     getDocs(collection(db,"tournamentArchive")).then(snap=>{
@@ -2707,10 +2849,22 @@ function MatchArchive({onBack,T,theme,onThemeToggle}){
     }).catch(()=>setLoading(false));
   },[]);
 
+  const loadChat=async(entryId)=>{
+    if(archivedChats[entryId])return;
+    try{
+      const snap=await getDocs(collection(db,"tournamentArchive",entryId,"chat"));
+      const msgs=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>a.ts-b.ts);
+      setArchivedChats(prev=>({...prev,[entryId]:msgs}));
+    }catch(e){setArchivedChats(prev=>({...prev,[entryId]:[]}));}
+  };
+
   const deleteEntry=async id=>{
     await deleteDoc(doc(db,"tournamentArchive",id)).catch(()=>{});
     setArchived(prev=>prev.filter(a=>a._id!==id));setConfirmDelete(null);
   };
+
+  const ARCHIVE_TABS=["scores","stats","chat"];
+  const ARCHIVE_TAB_LABELS=["📋 Scorecards","📊 Statistik","💬 Chat"];
 
   return(
     <div style={{minHeight:"100vh",background:T.bg,color:T.cream,fontFamily:"Georgia,serif"}}>
@@ -2729,11 +2883,15 @@ function MatchArchive({onBack,T,theme,onThemeToggle}){
           const stats=entry.days?calcTournament(entry.days,entry.numDays,entry.matchesPerDay):null;
           return(
             <div key={entry._id} style={{background:T.cardBg,border:`1px solid ${T.border}`,borderRadius:"12px",marginBottom:"12px",overflow:"hidden"}}>
-              <div style={{padding:"12px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:"12px"}} onClick={()=>setExpanded(isOpen?null:entry._id)}>
+              {/* Entry header */}
+              <div style={{padding:"12px 14px",cursor:"pointer",display:"flex",alignItems:"center",gap:"12px"}} onClick={()=>{
+                setExpanded(isOpen?null:entry._id);
+                if(!isOpen){setArchiveTab("scores");loadChat(entry._id);}
+              }}>
                 <div style={{fontSize:"28px"}}>🏆</div>
                 <div style={{flex:1}}>
                   <div style={{fontSize:"13px",fontWeight:"700",color:T.gold}}>{entry.t1Name} vs {entry.t2Name}</div>
-                  <div style={{fontSize:"11px",color:T.muted,marginTop:"2px"}}>{entry.archivedAtLabel||"—"} · {entry.days?.length||0} Tage · {entry.days?.reduce((s,d)=>s+d.matches.length,0)||0} Matches</div>
+                  <div style={{fontSize:"11px",color:T.muted,marginTop:"2px"}}>{entry.archivedAtLabel||"—"} · {entry.days?.length||0} Tage</div>
                   {stats&&<div style={{fontSize:"11px",marginTop:"4px"}}><span style={{color:T.blue,fontWeight:"700"}}>{fmt(stats.t1Confirmed)}</span><span style={{color:T.muted}}> : </span><span style={{color:T.red,fontWeight:"700"}}>{fmt(stats.t2Confirmed)}</span></div>}
                 </div>
                 <div style={{display:"flex",gap:"6px",alignItems:"center"}}>
@@ -2741,35 +2899,121 @@ function MatchArchive({onBack,T,theme,onThemeToggle}){
                   <div style={{fontSize:"18px",color:T.faint,transform:isOpen?"rotate(90deg)":"rotate(0deg)",transition:"transform 0.2s"}}>›</div>
                 </div>
               </div>
+
               {isOpen&&entry.days&&(
-                <div style={{borderTop:`1px solid ${T.border}`,padding:"12px 14px"}}>
-                  {entry.days.map((day,di)=>{
-                    const course=COURSES[day.courseKey]||Object.values(COURSES)[0];
-                    let dayT1=0,dayT2=0;day.matches.forEach(m=>{[0,1].forEach(r=>{const rs=calcRoundStatus(m.scores,course.par,r*9,r*9+9,m.mode);const p=getPoints(rs);if(p){dayT1+=p.t1;dayT2+=p.t2;}});});
-                    return(
-                      <div key={di} style={{marginBottom:"12px"}}>
-                        <div style={{fontSize:"11px",color:T.gold,fontWeight:"700",marginBottom:"8px"}}>{day.label} – <span style={{color:T.blue}}>{fmt(dayT1)}</span> : <span style={{color:T.red}}>{fmt(dayT2)}</span></div>
-                        {day.matches.map(m=>{
-                          const r1=calcRoundStatus(m.scores,course.par,0,9);const r2=calcRoundStatus(m.scores,course.par,9,18,m.mode);
-                          const p1=getPoints(r1);const p2=getPoints(r2);
+                <div style={{borderTop:`1px solid ${T.border}`}}>
+                  {/* Sub-tabs */}
+                  <div style={{display:"flex",borderBottom:`1px solid ${T.border}`}}>
+                    {ARCHIVE_TABS.map((tab,ti)=>(
+                      <button key={tab} onClick={()=>setArchiveTab(tab)} style={{flex:1,padding:"8px 4px",background:"transparent",border:"none",borderBottom:`2px solid ${archiveTab===tab?T.gold:"transparent"}`,color:archiveTab===tab?T.gold:T.muted,fontSize:"10px",cursor:"pointer",fontWeight:archiveTab===tab?"700":"400"}}>
+                        {ARCHIVE_TAB_LABELS[ti]}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* SCORECARDS */}
+                  {archiveTab==="scores"&&(
+                    <div style={{padding:"12px 14px"}}>
+                      {entry.days.map((day,di)=>{
+                        const course=COURSES[day.courseKey]||Object.values(COURSES)[0];
+                        let dayT1=0,dayT2=0;
+                        day.matches.forEach(m=>{[0,1].forEach(r=>{const rs=calcRoundStatus(m.scores,course.par,r*9,r*9+9,m.mode);const p=getPoints(rs);if(p){dayT1+=p.t1;dayT2+=p.t2;}});});
+                        return(
+                          <div key={di} style={{marginBottom:"16px"}}>
+                            <div style={{fontSize:"11px",color:T.gold,fontWeight:"700",marginBottom:"10px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                              <span>{day.label}</span>
+                              <span><span style={{color:T.blue}}>{fmt(dayT1)}</span> : <span style={{color:T.red}}>{fmt(dayT2)}</span></span>
+                            </div>
+                            {day.matches.map(m=>{
+                              const r1=calcRoundStatus(m.scores,course.par,0,9,m.mode);
+                              const r2=calcRoundStatus(m.scores,course.par,9,18,m.mode);
+                              const p1=getPoints(r1);const p2=getPoints(r2);
+                              return(
+                                <div key={m.id} style={{background:T.isDark?"#0A2014":T.elevated,borderRadius:"10px",padding:"10px 12px",marginBottom:"8px"}}>
+                                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"8px"}}>
+                                    <div>
+                                      <div style={{fontSize:"12px",fontWeight:"700",color:T.cream,marginBottom:"2px"}}>{m.name}</div>
+                                      <div style={{fontSize:"10px",color:T.blue}}>{(m.t1Pair||[]).join(" & ")}</div>
+                                      <div style={{fontSize:"10px",color:T.red}}>{(m.t2Pair||[]).join(" & ")}</div>
+                                    </div>
+                                    <div style={{display:"flex",gap:"6px"}}>
+                                      {[{label:"R1",rs:r1,pts:p1},{label:"R2",rs:r2,pts:p2}].map(({label,rs,pts})=>(
+                                        <div key={label} style={{textAlign:"center",background:T.surface,borderRadius:"6px",padding:"4px 8px",border:`1px solid ${rs.diff>0?T.blue:rs.diff<0?T.red:T.border}`}}>
+                                          <div style={{fontSize:"8px",color:T.faint}}>{label}</div>
+                                          <div style={{fontSize:"13px",fontWeight:"900",color:rs.diff>0?T.blue:rs.diff<0?T.red:T.muted,fontFamily:"'Arial Black',sans-serif"}}>{rs.holesPlayed>0?rs.label:"—"}</div>
+                                          {pts&&<div style={{fontSize:"8px",color:T.muted}}>{pts.t1}–{pts.t2}</div>}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                  {/* Hole grid R1 */}
+                                  <div style={{fontSize:"8px",color:T.faint,marginBottom:"3px"}}>R1 · L. 1–9</div>
+                                  <div style={{display:"grid",gridTemplateColumns:"repeat(9,1fr)",gap:"2px",marginBottom:"6px"}}>
+                                    {m.scores.slice(0,9).map((s,i)=>{
+                                      const {t1,t2}=effectiveScores(s,m.mode);const played=t1!==null&&t2!==null;
+                                      const bg=played?(t1<t2?T.blue+"33":t2<t1?T.red+"33":T.border):T.elevated;
+                                      return <div key={i} style={{background:bg,borderRadius:"3px",textAlign:"center",padding:"2px 0",fontSize:"8px",color:T.muted}}><div style={{fontWeight:"700",color:T.faint}}>{i+1}</div>{played&&<div style={{fontWeight:"700",color:t1<t2?T.blue:t2<t1?T.red:T.muted}}>{t1}:{t2}</div>}</div>;
+                                    })}
+                                  </div>
+                                  {/* Hole grid R2 */}
+                                  <div style={{fontSize:"8px",color:T.faint,marginBottom:"3px"}}>R2 · L. 10–18</div>
+                                  <div style={{display:"grid",gridTemplateColumns:"repeat(9,1fr)",gap:"2px"}}>
+                                    {m.scores.slice(9,18).map((s,i)=>{
+                                      const {t1,t2}=effectiveScores(s,m.mode);const played=t1!==null&&t2!==null;
+                                      const bg=played?(t1<t2?T.blue+"33":t2<t1?T.red+"33":T.border):T.elevated;
+                                      return <div key={i} style={{background:bg,borderRadius:"3px",textAlign:"center",padding:"2px 0",fontSize:"8px",color:T.muted}}><div style={{fontWeight:"700",color:T.faint}}>{i+10}</div>{played&&<div style={{fontWeight:"700",color:t1<t2?T.blue:t2<t1?T.red:T.muted}}>{t1}:{t2}</div>}</div>;
+                                    })}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* STATISTIK */}
+                  {archiveTab==="stats"&&(
+                    <div style={{padding:"12px 14px"}}>
+                      <StatsTab days={entry.days} t1Name={entry.t1Name} t2Name={entry.t2Name} T={T}
+                        captainT1={entry.captainT1} captainT2={entry.captainT2}
+                        allPlayers={[...(entry.t1Players||[]),...(entry.t2Players||[])]}/>
+                    </div>
+                  )}
+
+                  {/* CHAT */}
+                  {archiveTab==="chat"&&(
+                    <div style={{padding:"12px 14px"}}>
+                      {!archivedChats[entry._id]&&<div style={{textAlign:"center",color:T.muted,padding:"20px"}}>Lade Chat...</div>}
+                      {archivedChats[entry._id]?.length===0&&<div style={{textAlign:"center",color:T.faint,padding:"20px",fontSize:"12px"}}>Kein Chat-Verlauf gespeichert</div>}
+                      <div style={{maxHeight:"400px",overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
+                        {(archivedChats[entry._id]||[]).map(msg=>{
+                          const isSystem=msg.type==="system";
+                          const typeColor={matchDecision:T.gold,matchDecisionT1:T.blue,matchDecisionT2:T.red,birdie:T.blue,leadChange:T.gold,halftime:T.muted,equalize:T.muted};
+                          const border=typeColor[msg.subtype]||T.border;
                           return(
-                            <div key={m.id} style={{background:T.isDark?"#0A2014":T.elevated,borderRadius:"8px",padding:"8px 10px",marginBottom:"6px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-                              <div>
-                                <div style={{fontSize:"11px",fontWeight:"700",color:T.cream}}>{m.name}</div>
-                                <div style={{fontSize:"10px",color:T.blue}}>{(m.t1Pair||[]).join(" & ")}</div>
-                                <div style={{fontSize:"10px",color:T.red}}>{(m.t2Pair||[]).join(" & ")}</div>
-                              </div>
-                              <div style={{textAlign:"right"}}>
-                                {[["R1",p1],["R2",p2]].map(([lbl,pts])=>(
-                                  <div key={lbl} style={{fontSize:"10px",color:T.muted}}>{lbl}: {pts?<><span style={{color:T.blue}}>{pts.t1}</span>–<span style={{color:T.red}}>{pts.t2}</span></>:"laufend"}</div>
-                                ))}
-                              </div>
+                            <div key={msg.id} style={{marginBottom:"6px"}}>
+                              {isSystem?(
+                                <div style={{background:T.elevated,borderLeft:`3px solid ${border}`,borderRadius:"0 6px 6px 0",padding:"5px 8px"}}>
+                                  <div style={{fontSize:"10px",color:T.cream}}>{msg.text}</div>
+                                  <div style={{fontSize:"8px",color:T.faint}}>{new Date(msg.ts).toLocaleTimeString("de-DE",{hour:"2-digit",minute:"2-digit"})}</div>
+                                </div>
+                              ):(
+                                <div style={{display:"flex",gap:"6px",alignItems:"flex-start"}}>
+                                  <div style={{width:"20px",height:"20px",borderRadius:"50%",background:T.elevated,display:"flex",alignItems:"center",justifyContent:"center",fontSize:"9px",color:T.muted,flexShrink:0}}>{(msg.author||"?")[0]}</div>
+                                  <div>
+                                    <div style={{fontSize:"9px",color:T.faint}}>{msg.author}</div>
+                                    <div style={{fontSize:"11px",color:T.cream,background:T.elevated,borderRadius:"6px",padding:"4px 8px"}}>{msg.text}</div>
+                                  </div>
+                                </div>
+                              )}
                             </div>
                           );
                         })}
                       </div>
-                    );
-                  })}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
