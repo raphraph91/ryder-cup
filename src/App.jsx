@@ -3,7 +3,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore, doc, setDoc, onSnapshot, getDoc, collection, getDocs, deleteDoc, addDoc, query, orderBy } from "firebase/firestore";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
-const VERSION = "2.14";
+const VERSION = "2.15";
 
 const firebaseConfig = {
   apiKey: "AIzaSyBLlzavBNImCRG0JacPZWdVIxezxKiqHcc",
@@ -1857,25 +1857,50 @@ function MatchCard({match,pars,t1Name,t2Name,canEdit,isAdmin,onHoleClick,onReset
               {(canEdit||isAdmin)&&<button onClick={()=>setShowReset(true)} style={{background:"transparent",border:`1px solid ${T.border}`,borderRadius:"6px",color:T.faint,padding:"4px 7px",cursor:"pointer",display:"flex",alignItems:"center",gap:"4px",fontSize:"10px"}}><IconReset size={11} color={T.faint}/></button>}
             </div>
           </div>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-            <div style={{display:"flex",alignItems:"center",gap:"6px"}}>
-              {t1PlayerIds.map((pid,i)=><PlayerAvatar key={i} name={(match.t1Pair||[])[i]||""} size={28} color={T.blue} photo={t1Photos[pid]||null}/>)}
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{display:"flex",alignItems:"center",gap:"4px",flexWrap:"wrap"}}>
-                  <div style={{fontSize:"11px",color:T.blue,fontWeight:"700"}}>{(match.t1Pair||[]).join(" & ")}</div>
-                  {t1HasCapt&&<span style={{fontSize:"9px",background:T.gold+"33",color:T.gold,borderRadius:"4px",padding:"1px 5px",fontWeight:"700",flexShrink:0}}>🎖️ C</span>}
-                </div>
+          {/* Fix 4: Players stacked, larger avatar, Vorname/Nachname on separate lines */}
+          <div style={{display:"flex",gap:"8px",marginTop:"4px"}}>
+            {/* Team 1 */}
+            <div style={{flex:1}}>
+              <div style={{fontSize:"8px",color:T.blue,fontWeight:"700",letterSpacing:"1px",marginBottom:"5px"}}>{t1Name}</div>
+              {(match.t1Pair||[]).map((fullName,i)=>{
+                const pid=t1PlayerIds[i];const photo=pid?t1Photos[pid]:null;
+                const parts=fullName.trim().split(" ");
+                const firstName=parts[0]||"";const lastName=parts.slice(1).join(" ")||"";
+                return(
+                  <div key={i} style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:i<(match.t1Pair||[]).length-1?"6px":"0"}}>
+                    <PlayerAvatar name={fullName} size={36} color={T.blue} photo={photo}/>
+                    <div>
+                      <div style={{fontSize:"11px",fontWeight:"700",color:T.blue,lineHeight:1.25}}>{firstName}</div>
+                      <div style={{fontSize:"11px",fontWeight:"700",color:T.blue,lineHeight:1.25}}>{lastName}</div>
+                    </div>
+                  </div>
+                );
+              })}
+              <div style={{display:"flex",alignItems:"center",gap:"4px",marginTop:"4px",flexWrap:"wrap"}}>
+                {t1HasCapt&&<span style={{fontSize:"9px",background:T.gold+"33",color:T.gold,borderRadius:"4px",padding:"1px 5px",fontWeight:"700"}}>🎖️ C</span>}
                 {match.teamHcp1!=null&&<div style={{fontSize:"9px",color:T.blue+"88"}}>HCP {match.teamHcp1}</div>}
               </div>
             </div>
-            <div style={{fontSize:"10px",color:T.muted}}>vs</div>
-            <div style={{display:"flex",alignItems:"center",gap:"6px",flexDirection:"row-reverse"}}>
-              {t2PlayerIds.map((pid,i)=><PlayerAvatar key={i} name={(match.t2Pair||[])[i]||""} size={28} color={T.red} photo={t2Photos[pid]||null}/>)}
-              <div style={{textAlign:"right"}}>
-                <div style={{display:"flex",alignItems:"center",gap:"4px",justifyContent:"flex-end",flexWrap:"wrap"}}>
-                  {t2HasCapt&&<span style={{fontSize:"9px",background:T.gold+"33",color:T.gold,borderRadius:"4px",padding:"1px 5px",fontWeight:"700",flexShrink:0}}>🎖️ C</span>}
-                  <div style={{fontSize:"11px",color:T.red,fontWeight:"700"}}>{(match.t2Pair||[]).join(" & ")}</div>
-                </div>
+            <div style={{display:"flex",alignItems:"center",fontSize:"10px",color:T.muted,padding:"0 2px"}}>vs</div>
+            {/* Team 2 */}
+            <div style={{flex:1}}>
+              <div style={{fontSize:"8px",color:T.red,fontWeight:"700",letterSpacing:"1px",marginBottom:"5px",textAlign:"right"}}>{t2Name}</div>
+              {(match.t2Pair||[]).map((fullName,i)=>{
+                const pid=t2PlayerIds[i];const photo=pid?t2Photos[pid]:null;
+                const parts=fullName.trim().split(" ");
+                const firstName=parts[0]||"";const lastName=parts.slice(1).join(" ")||"";
+                return(
+                  <div key={i} style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:i<(match.t2Pair||[]).length-1?"6px":"0",flexDirection:"row-reverse"}}>
+                    <PlayerAvatar name={fullName} size={36} color={T.red} photo={photo}/>
+                    <div style={{textAlign:"right"}}>
+                      <div style={{fontSize:"11px",fontWeight:"700",color:T.red,lineHeight:1.25}}>{firstName}</div>
+                      <div style={{fontSize:"11px",fontWeight:"700",color:T.red,lineHeight:1.25}}>{lastName}</div>
+                    </div>
+                  </div>
+                );
+              })}
+              <div style={{display:"flex",alignItems:"center",gap:"4px",marginTop:"4px",flexWrap:"wrap",justifyContent:"flex-end"}}>
+                {t2HasCapt&&<span style={{fontSize:"9px",background:T.gold+"33",color:T.gold,borderRadius:"4px",padding:"1px 5px",fontWeight:"700"}}>🎖️ C</span>}
                 {match.teamHcp2!=null&&<div style={{fontSize:"9px",color:T.red+"88"}}>HCP {match.teamHcp2}</div>}
               </div>
             </div>
@@ -2492,23 +2517,7 @@ function CourseTracker({day, matches, matchRefs, T}){
         {buildRow(0, stripW)}
         {buildRow(1, stripW)}
       </div>
-      {doneMI.length>0&&(
-        <div style={{display:"flex",alignItems:"center",gap:5,padding:"6px 8px",background:T.gold+"0D",border:`1px solid ${T.gold}22`,borderRadius:8,marginTop:6,flexWrap:"wrap"}}>
-          <span style={{fontSize:"10px",color:T.gold,fontWeight:"700"}}>✅</span>
-          {doneMI.map(({mi,label},idx)=>{
-            const st=statuses[mi];
-            const c=stColor(st.diff);
-            return(
-              <span key={idx} onClick={()=>scrollToMatch(mi)}
-                style={{background:c+"22",border:`1px solid ${c}55`,borderRadius:5,padding:"3px 7px",fontSize:"10px",fontWeight:900,color:c,cursor:"pointer",display:"inline-flex",alignItems:"center",gap:4}}>
-                <span style={{color:T.gold}}>M{mi+1}</span>
-                <span style={{color:T.faint,fontSize:9}}>{label}</span>
-                {st.label}
-              </span>
-            );
-          })}
-        </div>
-      )}
+      {/* doneMI Fertig-box removed — info visible on scorecards */}
     </div>
   );
 }
@@ -2672,20 +2681,56 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
       <Header title="Ryder Cup" onBack={onBack} backLabel="Menü" theme={theme} onThemeToggle={onThemeToggle} T={T}
         rightSlot={<div style={{display:"flex",alignItems:"center",gap:"4px"}}><div style={{width:"6px",height:"6px",borderRadius:"50%",background:saving?"#C9A84C":"#4CAF50"}}/><div style={{fontSize:"9px",color:"rgba(255,255,255,0.4)",letterSpacing:"1px"}}>{saving?"...":"Live"}</div></div>}/>
 
+      {/* Tabs integrated into header band */}
+      <div style={{background:T.isDark?"#071A0E":"#1B5E20",borderBottom:`2px solid ${T.gold}44`,display:"flex",position:"sticky",top:"60px",zIndex:9}}>
+        {tabs.map((tab,i)=>(<button key={tab.key} onClick={()=>setActiveTab(tab.key)} style={{flex:1,padding:"9px 2px",background:"transparent",border:"none",borderBottom:`2px solid ${activeTab===tab.key?T.gold:"transparent"}`,color:activeTab===tab.key?T.gold:"rgba(255,255,255,0.45)",cursor:"pointer",fontSize:"9px",letterSpacing:"0.5px",textTransform:"uppercase",fontWeight:activeTab===tab.key?"700":"400",display:"flex",alignItems:"center",justifyContent:"center",gap:"3px"}}>{tab.icon}{tab.label}</button>))}
+      </div>
+
       <div style={{padding:"14px",maxWidth:"480px",margin:"0 auto"}}>
         {showPush&&!pushGranted&&<PushBanner onDismiss={()=>setShowPush(false)} T={T}/>}
-        <div style={{display:"flex",alignItems:"center",justifyContent:"center",marginBottom:"12px"}}><RoleBadge role={role} T={T}/></div>
-        {/* Fix 7: removed redundant "Du spielst Match X" banner — info is on the match card itself */}
 
+        {/* GESAMTPUNKTESTAND — split bar with per-match segments */}
         <div style={{background:T.cardBg,border:`1px solid ${T.border}`,borderRadius:"12px",padding:"14px",marginBottom:"14px"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:"10px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",marginBottom:"10px"}}>
             <div><div style={{fontSize:"12px",fontWeight:"700",color:T.blue,textTransform:"uppercase",letterSpacing:"1px"}}>🔵 {t1Name}</div><div style={{fontSize:"40px",fontWeight:"900",color:T.blue,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{fmt(stats.t1Confirmed)}</div><div style={{fontSize:"10px",color:T.faint}}>proj. {stats.t1Projected}</div></div>
             <div style={{textAlign:"center"}}><div style={{fontSize:"9px",color:T.muted}}>ZIEL</div><div style={{fontSize:"20px",fontWeight:"900",color:T.gold}}>{stats.needed}</div><div style={{fontSize:"9px",color:T.faint}}>von {stats.totalPoints}</div></div>
             <div style={{textAlign:"right"}}><div style={{fontSize:"12px",fontWeight:"700",color:T.red,textTransform:"uppercase",letterSpacing:"1px"}}>🔴 {t2Name}</div><div style={{fontSize:"40px",fontWeight:"900",color:T.red,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{fmt(stats.t2Confirmed)}</div><div style={{fontSize:"10px",color:T.faint,textAlign:"right"}}>proj. {stats.t2Projected}</div></div>
           </div>
-          <div style={{height:"16px",borderRadius:"8px",overflow:"hidden",display:"flex",margin:"4px 0"}}><div style={{width:`${t1W}%`,background:T.blue,transition:"width 0.6s"}}/><div style={{flex:1,background:T.red}}/></div>
-          <div style={{display:"flex",justifyContent:"space-between",fontSize:"10px",color:T.muted}}><span>{stats.t1WinProb}% Sieg</span><span>{stats.t2WinProb}% Sieg</span></div>
-          <div style={{marginTop:"10px",display:"flex",flexDirection:"column",gap:"6px"}}>{days.map(d=><DaySummary key={d.id} day={d} t1Name={t1Name} t2Name={t2Name} T={T}/>)}</div>
+          {/* Legend */}
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:"9px",color:T.faint,marginBottom:"5px"}}>
+            <div style={{display:"flex",alignItems:"center",gap:"3px"}}><div style={{width:"9px",height:"9px",borderRadius:"2px",background:T.blue,flexShrink:0}}/><span>Bestätigt</span></div>
+            <div style={{display:"flex",alignItems:"center",gap:"3px"}}><div style={{width:"9px",height:"9px",borderRadius:"2px",background:T.blue+"55",border:`0.5px solid ${T.blue}33`,flexShrink:0}}/><span>Proj.</span></div>
+            <div style={{display:"flex",alignItems:"center",gap:"3px"}}><div style={{width:"9px",height:"9px",borderRadius:"2px",background:T.red+"55",border:`0.5px solid ${T.red}33`,flexShrink:0}}/><span>Proj.</span></div>
+            <div style={{display:"flex",alignItems:"center",gap:"3px"}}><div style={{width:"9px",height:"9px",borderRadius:"2px",background:T.red,flexShrink:0}}/><span>Bestätigt</span></div>
+          </div>
+          {/* Split bar with match segment hatching */}
+          {(()=>{
+            const total=stats.totalPoints||8;
+            const t1c=stats.t1Confirmed||0;const t2c=stats.t2Confirmed||0;
+            const t1p=Math.max(0,(stats.t1Projected||0)-t1c);
+            const t2p=Math.max(0,(stats.t2Projected||0)-t2c);
+            // Build confirmed segments per match (each match contributes max 2pts)
+            const matchPts=[];
+            days.forEach(day=>{const c=COURSES[day.courseKey]||Object.values(COURSES)[0];day.matches.forEach(m=>{let mp1=0,mp2=0;[0,1].forEach(r=>{const rs=calcRoundStatus(m.scores,c.par,r*9,r*9+9,m.mode);const p=getPoints(rs);if(p){mp1+=p.t1;mp2+=p.t2;}});if(mp1>0||mp2>0)matchPts.push({t1:mp1,t2:mp2});});});
+            return(
+              <div style={{height:"16px",borderRadius:"8px",overflow:"hidden",display:"flex",margin:"4px 0"}}>
+                {/* T1 confirmed segments */}
+                {matchPts.filter(m=>m.t1>0).map((m,i)=>(
+                  <div key={"t1c"+i} style={{width:`${(m.t1/total)*100}%`,background:T.blue,borderRight:`1.5px solid ${T.isDark?"#0A2014":"#F4F6F4"}`,flexShrink:0}}/>
+                ))}
+                {/* T1 projected */}
+                {t1p>0&&<div style={{width:`${(t1p/total)*100}%`,background:T.blue+"55",borderRight:`1px solid ${T.blue}33`,flexShrink:0}}/>}
+                {/* T2 projected */}
+                {t2p>0&&<div style={{flex:t2c>0?undefined:1,width:t2c>0?`${(t2p/total)*100}%`:undefined,background:T.red+"55",borderLeft:`1px solid ${T.red}33`,flexShrink:0}}/>}
+                {/* T2 confirmed segments */}
+                {matchPts.filter(m=>m.t2>0).reverse().map((m,i)=>(
+                  <div key={"t2c"+i} style={{width:`${(m.t2/total)*100}%`,background:T.red,borderLeft:`1.5px solid ${T.isDark?"#0A2014":"#F4F6F4"}`,flexShrink:0}}/>
+                ))}
+              </div>
+            );
+          })()}
+          <div style={{display:"flex",justifyContent:"space-between",fontSize:"10px",color:T.muted}}><span style={{color:T.blue}}>{stats.t1WinProb}% Sieg</span><span style={{color:T.red}}>{stats.t2WinProb}% Sieg</span></div>
+          {/* No DaySummary — moved to Statistik tab */}
         </div>
 
         {activeDay&&(
@@ -2699,9 +2744,7 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle}){
 
         {/* Mini-Chat removed — access via Chat tab only */}
 
-        <div style={{display:"flex",marginBottom:"14px",borderRadius:"8px",overflow:"hidden",border:`1px solid ${T.border}`}}>
-          {tabs.map((tab,i)=>(<button key={tab.key} style={{flex:1,padding:"10px 4px",background:activeTab===tab.key?T.elevated:T.isDark?"#0A2014":T.bg,border:"none",borderLeft:i>0?`1px solid ${T.border}`:"none",color:activeTab===tab.key?T.gold:T.muted,cursor:"pointer",fontSize:"10px",letterSpacing:"0.5px",textTransform:"uppercase",fontWeight:activeTab===tab.key?"700":"400",display:"flex",alignItems:"center",justifyContent:"center",gap:"4px"}} onClick={()=>setActiveTab(tab.key)}>{tab.icon}{tab.label}</button>))}
-        </div>
+        {/* Tabs now in header band above — no separate tab row here */}
 
         {activeTab==="chat"&&<LiveChat role={role} T={T} mini={false} onClearChat={isAdmin?clearChat:null}/>}
         {halftimePopup&&(
