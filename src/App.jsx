@@ -2757,35 +2757,6 @@ function StatsTab({days,t1Name,t2Name,T,captainT1,captainT2,allPlayers}){
         </Card>
       </>)}
 
-<ST>🗺️ LOCH-HEATMAP</ST>
-        <Card>
-          <HoleHeatmap holeWins={stats.holeWins} T={T}/>
-          <div style={{display:"flex",gap:12,marginTop:10,fontSize:10}}>
-            <span style={{color:T.blue}}>🔵 {t1Name}</span>
-            <span style={{color:T.muted}}>🤝 Tie</span>
-            <span style={{color:T.red}}>🔴 {t2Name}</span>
-          </div>
-        </Card>
-
-        <ST>📈 GEWONNENE LÖCHER PRO PAAR</ST>
-        <Card>
-          {[...stats.t1Pairs,...stats.t2Pairs].map((p,i)=>{
-            const color=p.team==="t1"?T.blue:T.red;
-            return(
-              <div key={i} style={{marginBottom:10}}>
-                <div style={{display:"flex",justifyContent:"space-between",fontSize:11,marginBottom:3}}>
-                  <span style={{color:T.cream}}>{p.name}</span>
-                  <span style={{fontWeight:700,color}}>{p.holesWon}/18</span>
-                </div>
-                <div style={{height:8,background:T.elevated,borderRadius:4,overflow:"hidden"}}>
-                  <div style={{width:`${(p.holesWon/18)*100}%`,height:"100%",background:color,borderRadius:4,boxShadow:`0 0 6px ${color}44`,transition:"width 0.6s"}}/>
-                </div>
-              </div>
-            );
-          })}
-        </Card>
-      </>)}
-
       {/* ── SPIELER (Shot Tracking) ── */}
       {sec===4&&<SpielerTab days={days} t1Name={t1Name} t2Name={t2Name} T={T} allPlayers={allPlayers}/>}
     </div>
