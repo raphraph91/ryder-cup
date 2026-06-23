@@ -2380,6 +2380,119 @@ function HoleHeatmap({holeWins,T}){
 }
 
 // ── New StatsTab ──────────────────────────────────────────────────────────────
+function SpielerTab({days,t1Name,t2Name,T,allPlayers}){
+  const playerStats={};
+  const allPl=allPlayers||[];
+  allPl.forEach(p=>{playerStats[p.id]={id:p.id,name:`${p.fn} ${p.ln}`,photo:p.photo||null,team:null,shots:0,putts:0,holesLed:0,birdieHoles:0,parHoles:0,bogeyHoles:0};});
+  days.forEach(day=>{
+    const course=COURSES[day.courseKey]||Object.values(COURSES)[0];
+    day.matches.filter(m=>m.mode==="scramble").forEach(m=>{
+      [...(m.t1PlayerIds||[]).map((id,i)=>({id,name:(m.t1Pair||[])[i]||id,photo:(m.t1Photos||{})[id]||null,team:"t1"})),
+       ...(m.t2PlayerIds||[]).map((id,i)=>({id,name:(m.t2Pair||[])[i]||id,photo:(m.t2Photos||{})[id]||null,team:"t2"}))
+      ].forEach(p=>{
+        if(!playerStats[p.id])playerStats[p.id]={id:p.id,name:p.name,photo:p.photo,team:p.team,shots:0,putts:0,holesLed:0,birdieHoles:0,parHoles:0,bogeyHoles:0};
+        else if(!playerStats[p.id].team)playerStats[p.id].team=p.team;
+      });
+      m.scores.forEach((s,hi)=>{
+        const parV=course.par[hi];
+        [["t1",s.t1Shots,s.t1Putts,s.team1],["t2",s.t2Shots,s.t2Putts,s.team2]].forEach(([,shots,putts,score])=>{
+          if(!shots||!shots.length)return;
+          shots.forEach((pid,si)=>{
+            if(playerStats[pid]){
+              playerStats[pid].shots++;
+              if(putts&&si>=shots.length-putts)playerStats[pid].putts++;
+            }
+          });
+          const cnt={};shots.forEach(pid=>{cnt[pid]=(cnt[pid]||0)+1;});
+          const leader=Object.entries(cnt).sort((a,b)=>b[1]-a[1])[0]?.[0];
+          if(leader&&playerStats[leader]&&parV&&score!==null){
+            playerStats[leader].holesLed++;
+            const d=score-parV;
+            if(d<0)playerStats[leader].birdieHoles++;
+            else if(d===0)playerStats[leader].parHoles++;
+            else playerStats[leader].bogeyHoles++;
+          }
+        });
+      });
+    });
+  });
+  const entries=Object.values(playerStats).filter(p=>p.shots>0||p.holesLed>0);
+  const maxShots=Math.max(...entries.map(p=>p.shots),1);
+  const Card=({children,style})=>(<div style={{background:T.surface,border:`1px solid ${T.border}`,borderRadius:10,padding:"12px 14px",marginBottom:10,...style}}>{children}</div>);
+  const ST=({children})=>(<div style={{fontSize:10,color:T.gold,letterSpacing:2,fontWeight:700,margin:"16px 0 10px",display:"flex",alignItems:"center",gap:6}}><div style={{flex:1,height:1,background:T.border}}/>{children}<div style={{flex:1,height:1,background:T.border}}/></div>);
+
+  if(entries.length===0){
+    return(
+      <Card>
+        <div style={{textAlign:"center",color:T.faint,fontSize:"12px",padding:"20px"}}>
+          Noch keine Schlag-Daten.<br/>Trage Scramble-Scores ein um Spieler-Statistiken zu sehen.
+        </div>
+      </Card>
+    );
+  }
+  return(
+    <div>
+      {["t1","t2"].map(team=>{
+        const color=team==="t1"?T.blue:T.red;
+        const teamEntries=entries.filter(p=>p.team===team).sort((a,b)=>b.shots-a.shots);
+        if(!teamEntries.length)return null;
+        return(
+          <div key={team}>
+            <ST>{team==="t1"?`🔵 ${t1Name}`:`🔴 ${t2Name}`}</ST>
+            {teamEntries.map(p=>(
+              <Card key={p.id}>
+                <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"10px"}}>
+                  <PlayerAvatar name={p.name} size={40} color={color} photo={p.photo}/>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:"12px",fontWeight:"700",color:T.cream}}>{p.name}</div>
+                    <div style={{fontSize:"10px",color:T.faint}}>{p.holesLed} Löcher angeführt · {p.putts} Putts</div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:"22px",fontWeight:"900",color,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{p.shots}</div>
+                    <div style={{fontSize:"9px",color:T.faint}}>Schläge</div>
+                  </div>
+                </div>
+                <div style={{marginBottom:"8px"}}>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:"8px",color:T.faint,marginBottom:"3px"}}>
+                    <span>Beitrags-Anteil</span>
+                    <span style={{color}}>{p.shots} Schl.</span>
+                  </div>
+                  <div style={{height:"7px",background:T.elevated,borderRadius:"4px",overflow:"hidden"}}>
+                    <div style={{width:`${(p.shots/maxShots)*100}%`,height:"100%",background:color,borderRadius:"4px",boxShadow:`0 0 4px ${color}66`,transition:"width 0.5s"}}/>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:"6px"}}>
+                  {[{label:"🐦 Birdie",v:p.birdieHoles,c:"#4CAF50"},{label:"⬜ Par",v:p.parHoles,c:T.muted},{label:"🔴 Bogey+",v:p.bogeyHoles,c:"#FF9800"},{label:"⛳ Putts",v:p.putts,c:"#2E7D32"}].map((b,j)=>(
+                    <div key={j} style={{flex:1,background:T.elevated,borderRadius:"6px",padding:"4px",textAlign:"center"}}>
+                      <div style={{fontSize:"10px",color:b.c,fontWeight:"700"}}>{b.v}</div>
+                      <div style={{fontSize:"7px",color:T.faint,lineHeight:1.3}}>{b.label}</div>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            ))}
+          </div>
+        );
+      })}
+      <ST>🏆 RANKING</ST>
+      <Card>
+        {entries.sort((a,b)=>b.shots-a.shots).map((p,i)=>{
+          const color=p.team==="t1"?T.blue:T.red;
+          return(
+            <div key={p.id} style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:i<entries.length-1?"8px":"0"}}>
+              <div style={{fontSize:"12px",color:T.faint,width:"18px",fontWeight:"700"}}>{i+1}.</div>
+              <PlayerAvatar name={p.name} size={30} color={color} photo={p.photo}/>
+              <div style={{flex:1,fontSize:"11px",color:T.cream}}>{p.name}</div>
+              <div style={{fontSize:"11px",fontWeight:"700",color}}>{p.shots} Schl.</div>
+              <div style={{fontSize:"9px",color:T.faint}}>{p.holesLed}× geführt</div>
+            </div>
+          );
+        })}
+      </Card>
+    </div>
+  );
+}
+
 function StatsTab({days,t1Name,t2Name,T,captainT1,captainT2,allPlayers}){
   const [sec,setSec]=useState(0);
   const stats=calcStats(days,t1Name,t2Name);
@@ -2674,95 +2787,7 @@ function StatsTab({days,t1Name,t2Name,T,captainT1,captainT2,allPlayers}){
       </>)}
 
       {/* ── SPIELER (Shot Tracking) ── */}
-      {sec===4&&(()=>{
-        const playerStats={};
-        const allPl=allPlayers||[];
-        allPl.forEach(p=>{playerStats[p.id]={id:p.id,name:`${p.fn} ${p.ln}`,photo:p.photo||null,team:null,shots:0,putts:0,holesLed:0,birdieHoles:0,parHoles:0,bogeyHoles:0};});
-        days.forEach(day=>{
-          const course=COURSES[day.courseKey]||Object.values(COURSES)[0];
-          day.matches.filter(m=>m.mode==="scramble").forEach(m=>{
-            // Register players if not yet seen
-            [...(m.t1PlayerIds||[]).map((id,i)=>({id,name:(m.t1Pair||[])[i]||id,photo:(m.t1Photos||{})[id]||null,team:"t1"})),
-             ...(m.t2PlayerIds||[]).map((id,i)=>({id,name:(m.t2Pair||[])[i]||id,photo:(m.t2Photos||{})[id]||null,team:"t2"}))
-            ].forEach(p=>{if(!playerStats[p.id])playerStats[p.id]={id:p.id,name:p.name,photo:p.photo,team:p.team,shots:0,putts:0,holesLed:0,birdieHoles:0,parHoles:0,bogeyHoles:0};else if(!playerStats[p.id].team)playerStats[p.id].team=p.team;});
-            m.scores.forEach((s,hi)=>{
-              const parV=course.par[hi];
-              [["t1",s.t1Shots,s.t1Putts,s.team1],["t2",s.t2Shots,s.t2Putts,s.team2]].forEach(([,shots,putts,score])=>{
-                if(!shots||!shots.length)return;
-                shots.forEach((pid,si)=>{if(playerStats[pid]){playerStats[pid].shots++;if(putts&&si>=shots.length-putts)playerStats[pid].putts++;}});
-                const cnt={};shots.forEach(pid=>{cnt[pid]=(cnt[pid]||0)+1;});
-                const leader=Object.entries(cnt).sort((a,b)=>b[1]-a[1])[0]?.[0];
-                if(leader&&playerStats[leader]&&parV&&score!==null){
-                  playerStats[leader].holesLed++;
-                  const d=score-parV;
-                  if(d<0)playerStats[leader].birdieHoles++;
-                  else if(d===0)playerStats[leader].parHoles++;
-                  else playerStats[leader].bogeyHoles++;
-                }
-              });
-            });
-          });
-        });
-        const entries=Object.values(playerStats).filter(p=>p.shots>0||p.holesLed>0);
-        const maxShots=Math.max(...entries.map(p=>p.shots),1);
-        if(entries.length===0)return(<>
-          <Card><div style={{textAlign:"center",color:T.faint,fontSize:"12px",padding:"20px"}}>Noch keine Schlag-Daten.<br/>Trage Scramble-Scores ein um Spieler-Statistiken zu sehen.</div></Card>
-        </>);
-        return(<>
-          {["t1","t2"].map(team=>{
-            const color=team==="t1"?T.blue:T.red;
-            const teamEntries=entries.filter(p=>p.team===team).sort((a,b)=>b.shots-a.shots);
-            if(!teamEntries.length)return null;
-            return(<div key={team}>
-              <ST>{team==="t1"?`🔵 ${t1Name}`:`🔴 ${t2Name}`}</ST>
-              {teamEntries.map((p)=>(
-                <Card key={p.id}>
-                  <div style={{display:"flex",alignItems:"center",gap:"10px",marginBottom:"10px"}}>
-                    <PlayerAvatar name={p.name} size={40} color={color} photo={p.photo}/>
-                    <div style={{flex:1}}>
-                      <div style={{fontSize:"12px",fontWeight:"700",color:T.cream}}>{p.name}</div>
-                      <div style={{fontSize:"10px",color:T.faint}}>{p.holesLed} Löcher angeführt · {p.putts} Putts</div>
-                    </div>
-                    <div style={{textAlign:"right"}}>
-                      <div style={{fontSize:"22px",fontWeight:"900",color,fontFamily:"'Arial Black',sans-serif",lineHeight:1}}>{p.shots}</div>
-                      <div style={{fontSize:"9px",color:T.faint}}>Schläge</div>
-                    </div>
-                  </div>
-                  <div style={{marginBottom:"8px"}}>
-                    <div style={{display:"flex",justifyContent:"space-between",fontSize:"8px",color:T.faint,marginBottom:"3px"}}><span>Beitrags-Anteil</span><span style={{color}}>{p.shots} Schl.</span></div>
-                    <div style={{height:"7px",background:T.elevated,borderRadius:"4px",overflow:"hidden"}}>
-                      <div style={{width:`${(p.shots/maxShots)*100}%`,height:"100%",background:color,borderRadius:"4px",boxShadow:`0 0 4px ${color}66`,transition:"width 0.5s"}}/>
-                    </div>
-                  </div>
-                  <div style={{display:"flex",gap:"6px"}}>
-                    {[{label:"🐦 Birdie",v:p.birdieHoles,c:"#4CAF50"},{label:"⬜ Par",v:p.parHoles,c:T.muted},{label:"🔴 Bogey+",v:p.bogeyHoles,c:"#FF9800"},{label:"⛳ Putts",v:p.putts,c:"#2E7D32"}].map((b,j)=>(
-                      <div key={j} style={{flex:1,background:T.elevated,borderRadius:"6px",padding:"4px",textAlign:"center"}}>
-                        <div style={{fontSize:"10px",color:b.c,fontWeight:"700"}}>{b.v}</div>
-                        <div style={{fontSize:"7px",color:T.faint,lineHeight:1.3}}>{b.label}</div>
-                      </div>
-                    ))}
-                  </div>
-                </Card>
-              ))}
-            </div>);
-          })}
-          <ST>🏆 RANKING</ST>
-          <Card>
-            {entries.sort((a,b)=>b.shots-a.shots).map((p,i)=>{
-              const color=p.team==="t1"?T.blue:T.red;
-              return(
-                <div key={p.id} style={{display:"flex",alignItems:"center",gap:"8px",marginBottom:i<entries.length-1?"8px":"0"}}>
-                  <div style={{fontSize:"12px",color:T.faint,width:"18px",fontWeight:"700"}}>{i+1}.</div>
-                  <PlayerAvatar name={p.name} size={30} color={color} photo={p.photo}/>
-                  <div style={{flex:1,fontSize:"11px",color:T.cream}}>{p.name}</div>
-                  <div style={{fontSize:"11px",fontWeight:"700",color}}>{p.shots} Schl.</div>
-                  <div style={{fontSize:"9px",color:T.faint}}>{p.holesLed}× geführt</div>
-                </div>
-              );
-            })}
-          </Card>
-        </>);
-      })()}
+      {sec===4&&<SpielerTab days={days} t1Name={t1Name} t2Name={t2Name} T={T} allPlayers={allPlayers}/>}
     </div>
   );
 } 
