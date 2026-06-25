@@ -22,7 +22,7 @@ module.exports = async function handler(req, res) {
     const db = getFirestore();
     const messaging = getMessaging();
 
-    const { title, body } = req.body;
+    const { title, body, tag, winnerTeam } = req.body;
     if (!title || !body) {
       return res.status(400).json({ error: 'title and body required' });
     }
@@ -35,10 +35,16 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ sent: 0, message: 'No tokens registered' });
     }
 
+    // Fix 5 (v3.02): tag = dedupeKey so iOS replaces same-tag notifications
+    // instead of stacking; pass winnerTeam through data for colored border.
+    const pushTag = tag || 'ryder-push';
+    const teamColor = winnerTeam === 't1' ? '#185FA5' : winnerTeam === 't2' ? '#A32D2D' : '#C9A84C';
+
     // Multicast Push verschicken
     const response = await messaging.sendEachForMulticast({
       tokens,
       notification: { title, body },
+      data: { winnerTeam: winnerTeam || '', teamColor },
       webpush: {
         notification: {
           title,
@@ -47,6 +53,8 @@ module.exports = async function handler(req, res) {
           badge: '/icon-192.svg',
           vibrate: [200, 100, 200],
           requireInteraction: false,
+          tag: pushTag,
+          renotify: false,
         },
         fcmOptions: { link: '/' },
       },

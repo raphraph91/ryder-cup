@@ -25,7 +25,7 @@ messaging.onBackgroundMessage((payload) => {
         body: payload.notification?.body||payload.data?.body||'',
         icon: '/icon-192.svg',
         badge: '/icon-192.svg',
-        tag: payload.data?.dedupeKey||'ryder-push', // same tag = replace, not stack
+        tag: payload.fcmOptions?.tag||payload.data?.tag||payload.notification?.tag||'ryder-push', // same tag = replace, not stack
         renotify: false,
       }
     );
