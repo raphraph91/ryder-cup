@@ -32,3 +32,22 @@ messaging.onBackgroundMessage((payload) => {
   });
 });
 
+
+// v3.13: Click notification → open app in Chat tab
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({type:'window',includeUncontrolled:true}).then(clients=>{
+      // If app is already open, focus it and navigate to chat
+      for(const c of clients){
+        if(c.url.includes(self.registration.scope)){
+          c.focus();
+          c.postMessage({type:'openChat'});
+          return;
+        }
+      }
+      // Otherwise open new window with chat tab
+      return self.clients.openWindow('/?tab=chat');
+    })
+  );
+});
