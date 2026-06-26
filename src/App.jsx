@@ -3338,24 +3338,11 @@ function Dashboard({config,role,onBack,onEndTournament,theme,onThemeToggle,onRef
       
       <WinBanner event={winEvent} onDone={()=>setWinEvent(null)}/>
       {toast&&<Toast message={toast} onDismiss={()=>setToast(null)}/>}
-      {/* v3.10: Logout confirmation popup */}
-      {showLogoutConfirm&&(
-        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:300,padding:"20px"}} onClick={()=>setShowLogoutConfirm(false)}>
-          <div style={{background:T.surface,border:`2px solid ${T.gold}`,borderRadius:"16px",padding:"28px 24px",maxWidth:"300px",width:"100%",textAlign:"center"}} onClick={e=>e.stopPropagation()}>
-            <div style={{fontSize:"32px",marginBottom:"10px"}}>🚪</div>
-            <div style={{fontSize:"16px",fontWeight:"900",color:T.cream,marginBottom:"6px"}}>Sicher ausloggen?</div>
-            <div style={{fontSize:"12px",color:T.faint,marginBottom:"20px"}}>Du wirst zur Login-Seite zurückgeleitet.</div>
-            <div style={{display:"flex",gap:"10px"}}>
-              <button onClick={()=>setShowLogoutConfirm(false)} style={{flex:1,padding:"10px",background:"transparent",border:`1px solid ${T.border}`,borderRadius:"8px",color:T.muted,fontSize:"13px",cursor:"pointer"}}>Abbrechen</button>
-              <button onClick={()=>{setShowLogoutConfirm(false);goToLogin();}} style={{flex:1,padding:"10px",background:`linear-gradient(135deg,${T.gold},#A07830)`,border:"none",borderRadius:"8px",color:T.isDark?"#0D2B1A":"white",fontSize:"13px",fontWeight:"700",cursor:"pointer"}}>Ausloggen</button>
-            </div>
-          </div>
-        </div>
-      )}
+
       {resetAll&&<ResetConfirm title="Alle Matches zurücksetzen?" message="Wirklich ALLE Scores löschen?" onConfirm={doResetAll} onClose={()=>setResetAll(false)} T={T}/>}
       {showEndConfirm&&<ResetConfirm title="Turnier beenden?" message="Das Turnier wird archiviert und ist danach unter 'Match Archiv' einsehbar." confirmLabel="Ja, Turnier beenden" danger={false} onConfirm={()=>{setShowEndConfirm(false);onEndTournament(config);}} onClose={()=>setShowEndConfirm(false)} T={T}/>}
 
-      <Header title="Ryder Cup" onBack={handleLogout} backLabel="Ausloggen" theme={theme} onThemeToggle={onThemeToggle} T={T}
+      <Header title="Ryder Cup" onBack={onBack} backLabel="Ausloggen" theme={theme} onThemeToggle={onThemeToggle} T={T}
         rightSlot={<div style={{display:"flex",alignItems:"center",gap:"8px"}}>
           <button onClick={doSync} title="Aktualisieren" style={{background:syncState==="done"?"#4CAF5022":"transparent",border:`1px solid ${syncState==="done"?"#4CAF5066":"rgba(255,255,255,0.2)"}`,borderRadius:"6px",padding:"5px 7px",color:"rgba(255,255,255,0.7)",fontSize:"11px",cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",transition:"all 0.2s"}}>
             {syncState==="done"
@@ -3793,7 +3780,7 @@ function AdminMenu({config,onSelect,onBack,theme,onThemeToggle,T}){
   ];
   return(
     <div style={{minHeight:"100vh",background:T.bg,color:T.cream,fontFamily:"Georgia,serif"}}>
-      <Header title="Ryder Cup" subtitle="ADMIN BEREICH" onBack={handleLogout} backLabel="Ausloggen" theme={theme} onThemeToggle={onThemeToggle} T={T}/>
+      <Header title="Ryder Cup" subtitle="ADMIN BEREICH" onBack={onBack} backLabel="Ausloggen" theme={theme} onThemeToggle={onThemeToggle} T={T}/>
       <div style={{padding:"20px",maxWidth:"480px",margin:"0 auto"}}>
         <div style={{background:T.elevated,border:`1px solid ${T.gold}44`,borderRadius:"10px",padding:"12px 16px",marginBottom:"20px",display:"flex",alignItems:"center",gap:"10px"}}>
           <span style={{fontSize:"20px"}}>👑</span>
@@ -3907,6 +3894,19 @@ export default function App(){
   },[phase,adminSection]);
 
   const T=THEMES[theme];
+  const logoutPopup=showLogoutConfirm?(
+    <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.85)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:300,padding:"20px"}} onClick={()=>setShowLogoutConfirm(false)}>
+      <div style={{background:T.surface,border:`2px solid ${T.gold}`,borderRadius:"16px",padding:"28px 24px",maxWidth:"300px",width:"100%",textAlign:"center"}} onClick={e=>e.stopPropagation()}>
+        <div style={{fontSize:"32px",marginBottom:"10px"}}>🚪</div>
+        <div style={{fontSize:"16px",fontWeight:"900",color:T.cream,marginBottom:"6px"}}>Sicher ausloggen?</div>
+        <div style={{fontSize:"12px",color:T.faint,marginBottom:"20px"}}>Du wirst zur Login-Seite zurückgeleitet.</div>
+        <div style={{display:"flex",gap:"10px"}}>
+          <button onClick={()=>setShowLogoutConfirm(false)} style={{flex:1,padding:"10px",background:"transparent",border:`1px solid ${T.border}`,borderRadius:"8px",color:T.muted,fontSize:"13px",cursor:"pointer"}}>Abbrechen</button>
+          <button onClick={()=>{setShowLogoutConfirm(false);goToLogin();}} style={{flex:1,padding:"10px",background:`linear-gradient(135deg,${T.gold},#A07830)`,border:"none",borderRadius:"8px",color:T.isDark?"#0D2B1A":"white",fontSize:"13px",fontWeight:"700",cursor:"pointer"}}>Ausloggen</button>
+        </div>
+      </div>
+    </div>
+  ):null;
 
   if(phase==="login")return<Login onLogin={handleLogin} theme={theme} onThemeToggle={toggleTheme}/>;
   if(loading)return(
@@ -3914,7 +3914,7 @@ export default function App(){
       <div style={{textAlign:"center"}}><div style={{fontSize:"40px",marginBottom:"12px"}}>⛳</div><div style={{color:T.muted,fontSize:"14px",letterSpacing:"2px"}}>Lade...</div></div>
     </div>
   );
-  if(phase==="waiting")return(
+  if(phase==="waiting")return(<>{logoutPopup}
     <div style={{minHeight:"100vh",background:T.bg,color:T.cream,fontFamily:"Georgia,serif"}}>
       <Header title="Ryder Cup" onBack={handleLogout} backLabel="Ausloggen" theme={theme} onThemeToggle={toggleTheme} T={T}/>
       <div style={{display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",minHeight:"calc(100vh - 60px)",padding:"20px",gap:"16px"}}>
@@ -3924,7 +3924,7 @@ export default function App(){
         </button>
       </div>
     </div>
-  );
+  </>);
   if(phase==="viewerArchive")return<ViewerArchive onBack={()=>setPhase("waiting")} T={T} theme={theme} onThemeToggle={toggleTheme}/>;
 
   if(phase==="adminMenu"){
@@ -3948,10 +3948,10 @@ export default function App(){
     if(adminSection==="archive")return<MatchArchive onBack={goToAdminMenu} T={T} theme={theme} onThemeToggle={toggleTheme}/>;
     if(adminSection==="game"){
       if(!config)return<AdminMenu config={config} onSelect={handleSelectSection} onBack={goToLogin} theme={theme} onThemeToggle={toggleTheme} T={T}/>;
-      return<Dashboard config={config} role="admin" onBack={goToAdminMenu} onEndTournament={handleEndTournament} theme={theme} onThemeToggle={toggleTheme}/>;
+      return(<>{logoutPopup}<Dashboard config={config} role="admin" onBack={handleLogout} onEndTournament={handleEndTournament} theme={theme} onThemeToggle={toggleTheme}/></>);
     }
   }
 
   if(!config)return null;
-  return<Dashboard config={config} role={role} onBack={goToLogin} onEndTournament={()=>{}} theme={theme} onThemeToggle={toggleTheme} onRefreshConfig={cfg=>{setConfig(cfg);}}/>;
+  return(<>{logoutPopup}<Dashboard config={config} role={role} onBack={handleLogout} onEndTournament={()=>{}} theme={theme} onThemeToggle={toggleTheme} onRefreshConfig={cfg=>{setConfig(cfg);}}/></>);
 }
