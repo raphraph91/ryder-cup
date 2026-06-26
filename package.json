@@ -1,6 +1,6 @@
 {
   "name": "ryder-cup",
-  "version": "3.05",
+  "version": "3.06",
   "private": true,
   "dependencies": {
     "react": "^18.2.0",
