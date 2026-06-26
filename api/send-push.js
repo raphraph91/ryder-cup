@@ -22,12 +22,11 @@ module.exports = async function handler(req, res) {
     const db = getFirestore();
     const messaging = getMessaging();
 
-    const { title, body, tag, winnerTeam } = req.body;
+    const { title, body, tag, winnerTeam, senderUid } = req.body;
     if (!title || !body) {
       return res.status(400).json({ error: 'title and body required' });
     }
 
-    // Alle FCM Tokens aus Firestore laden
     const tokensSnap = await db.collection('fcm_tokens').get();
     const tokens = tokensSnap.docs.map(d => d.data().token).filter(Boolean);
 
@@ -35,15 +34,12 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ sent: 0, message: 'No tokens registered' });
     }
 
-    // v3.09: PURE data-only message. No notification field anywhere.
-    // The service worker's onBackgroundMessage is the ONLY thing that shows
-    // a notification. This prevents the double-push bug where FCM auto-showed
-    // one AND the SW showed another.
+    // v3.11: pure data-only. senderUid passed so clients can skip own pushes.
     const pushTag = tag || 'ryder-push';
 
     const response = await messaging.sendEachForMulticast({
       tokens,
-      data: { title, body, tag: pushTag, winnerTeam: winnerTeam || '' },
+      data: { title, body, tag: pushTag, winnerTeam: winnerTeam || '', senderUid: senderUid || '' },
     });
 
     // Ungültige Tokens löschen
