@@ -35,15 +35,29 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({ sent: 0, message: 'No tokens registered' });
     }
 
-    // v3.09: PURE data-only message. No notification field anywhere.
-    // The service worker's onBackgroundMessage is the ONLY thing that shows
-    // a notification. This prevents the double-push bug where FCM auto-showed
-    // one AND the SW showed another.
+    // Fix 5 (v3.02): tag = dedupeKey so iOS replaces same-tag notifications
+    // instead of stacking; pass winnerTeam through data for colored border.
     const pushTag = tag || 'ryder-push';
+    const teamColor = winnerTeam === 't1' ? '#185FA5' : winnerTeam === 't2' ? '#A32D2D' : '#C9A84C';
 
+    // Multicast Push verschicken
     const response = await messaging.sendEachForMulticast({
       tokens,
-      data: { title, body, tag: pushTag, winnerTeam: winnerTeam || '' },
+      notification: { title, body },
+      data: { winnerTeam: winnerTeam || '', teamColor },
+      webpush: {
+        notification: {
+          title,
+          body,
+          icon: '/icon-192.svg',
+          badge: '/icon-192.svg',
+          vibrate: [200, 100, 200],
+          requireInteraction: false,
+          tag: pushTag,
+          renotify: false,
+        },
+        fcmOptions: { link: '/' },
+      },
     });
 
     // Ungültige Tokens löschen
